@@ -1,132 +1,130 @@
-# VideoPlatform — Django REST API
+# VideoPlatform — Frontend
 
-A video-sharing platform built with Django and Django REST Framework, featuring JWT authentication, video management, reactions, comments, user profiles, subscriptions, search, categories, and pagination.
+A video-sharing platform frontend built with **Next.js, React, and TypeScript**, integrated with a Django REST API backend.
+
+## Features
+
+* **Authentication:** User registration and login with JWT-based authentication.
+* **Video browsing:** Browse videos, search content, filter by category, and explore trending videos.
+* **Video playback:** Watch videos and interact through likes, dislikes, and comments.
+* **User profiles:** View user profiles, browse uploaded videos, and manage subscriptions.
+* **Creator dashboard:** Upload videos, edit existing videos, and manage uploaded content.
+* **Account settings:** Update profile information and manage account credentials.
+* **Responsive interface:** A component-based UI designed for a video-sharing experience.
+
+## Tech Stack
+
+* Next.js (App Router)
+* React
+* TypeScript
+* Tailwind CSS
+* Django REST Framework
+* JWT authentication
 
 ## Related Repository
 
 * **Backend:** [VideoPlatform-Backend](https://github.com/Mehr3had/VideoPlatform-Backend)
-* **Frontend:** [VideoPlatform-Frontend](https://github.com/Mehr3had/VideoPlatform-Frontend)
 
-## Tech Stack
+## Prerequisites
 
-* Python
-* Django
-* Django REST Framework
-* Simple JWT
-* SQLite
-* Pillow
-* django-cors-headers
+Make sure the following tools are installed:
 
-## Features
-
-* User registration and JWT authentication
-* User profiles and profile editing
-* Video upload, playback, editing, and deletion
-* Video thumbnails and view counts
-* Trending videos
-* Likes and dislikes
-* Comments
-* User subscriptions
-* Search, categories, and pagination
-* User dashboard and account settings
-* Next.js frontend integration
+* Node.js and npm
+* Git
+* The [VideoPlatform backend](https://github.com/Mehr3had/VideoPlatform-Backend), running locally
 
 ## Getting Started
-
-### Prerequisites
-
-* Python compatible with the installed Django version
-* Git
-* Node.js and npm if you also want to run the frontend
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Mehr3had/VideoPlatform-Backend.git
-cd VideoPlatform-Backend
+git clone https://github.com/Mehr3had/VideoPlatform-Frontend.git
+cd VideoPlatform-Frontend
 ```
 
-### 2. Create a virtual environment
+### 2. Install dependencies
 
-On Windows PowerShell:
-
-```powershell
-py -m venv venv
-.\venv\Scripts\Activate.ps1
+```bash
+npm install
 ```
 
-### 3. Install dependencies
+### 3. Configure environment variables
 
-```powershell
-python -m pip install -r requirements.txt
+Create a `.env.local` file in the project root:
+
+```env
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 ```
 
-### 4. Configure environment variables
+This variable defines the base URL of the Django backend. Update it if the backend runs at a different address.
 
-Create a `.env` file in the project root and add:
+The frontend uses this variable to construct API endpoints and backend resource URLs.
 
-```dotenv
-DJANGO_SECRET_KEY=your-generated-secret-key
+**Security note:** Variables prefixed with `NEXT_PUBLIC_` can be exposed to the browser. Never store passwords, secret keys, or private credentials in them.
+
+### 4. Start the backend
+
+Follow the setup instructions in the [backend repository](https://github.com/Mehr3had/VideoPlatform-Backend).
+
+Make sure the Django database migrations have been applied and the backend is running at `http://127.0.0.1:8000`.
+
+### 5. Start the frontend
+
+```bash
+npm run dev
 ```
 
-Generate a new secret key:
+Open http://localhost:3000 in your browser.
 
-```powershell
-python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+Make sure Django allows requests from `http://localhost:3000` through its CORS configuration.
+
+**Note:** The local database and uploaded video files are not included in this repository. You may need to create an account and upload sample videos to test all features.
+
+## Production Build
+
+To create an optimized production build:
+
+```bash
+npm run build
 ```
 
-Copy the generated key into `.env`. Never commit this file or share its contents.
+To run the production build locally:
 
-### 5. Apply database migrations
-
-```powershell
-python manage.py migrate
+```bash
+npm run start
 ```
 
-### 6. Start the development server
+## Project Structure
 
-```powershell
-python manage.py runserver
+```text
+src/
+├── app/
+│   ├── dashboard/
+│   │   ├── edit/[id]/
+│   │   └── upload/
+│   ├── login/
+│   ├── profile/
+│   │   ├── [id]/
+│   │   └── edit/
+│   ├── register/
+│   ├── settings/
+│   └── videos/[id]/
+├── components/
+│   └── Navbar.tsx
+└── lib/
+    └── api.ts
 ```
 
-The backend will run at:
+## Backend Integration
 
-`http://127.0.0.1:8000/`
+The frontend communicates with a Django REST API. The API base URL is configured through `NEXT_PUBLIC_API_URL` and centralized in `src/lib/api.ts`.
 
-The API endpoints are available under `/videos/api/`.
+For local development, the backend and frontend typically run on ports `8000` and `3000`, respectively. The backend must be running for API-dependent features to work.
 
-## Frontend Integration
+## Status
 
-The frontend is built with Next.js and runs locally at `http://localhost:3000`.
+This project is a full-stack learning and portfolio project and is under development.
 
-Configure the frontend API base URL to point to the Django backend:
+## License
 
-`http://127.0.0.1:8000`
-
-The backend's CORS settings are configured for the local frontend origin.
-
-See the [frontend repository](https://github.com/Mehr3had/VideoPlatform-Frontend) for its setup instructions.
-
-## Media Files
-
-Sample thumbnail images are included in the repository. Video files, uploaded profile images, and the local SQLite database are not included.
-
-After setting up the project, create an account through the registration endpoint or create an administrator with:
-
-```powershell
-python manage.py createsuperuser
-```
-
-Upload your own video files to test video playback and media-related features.
-
-## Security Notes
-
-* Keep `.env` out of version control.
-* Use a unique secret key.
-* `DEBUG=True` is intended for local development only.
-* Configure `ALLOWED_HOSTS`, HTTPS, production database settings, and media storage before deployment.
-* Never publish real credentials, secret keys, or authentication tokens.
-
-## Project Status
-
-A learning and portfolio project focused on Django REST APIs, authentication, media handling, and full-stack integration.
+No license has been specified yet.
