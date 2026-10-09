@@ -1,0 +1,218 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>{{ video.title }}</title>
+
+    <link rel="stylesheet" href="{% static 'videos/css/video_detail.css' %}">
+
+</head>
+
+<body>
+
+    <nav class="navbar">
+
+        <div class="logo">
+
+            <a href="{% url 'home' %}">
+                VideoPlatform
+            </a>
+
+        </div>
+
+        <div class="navbar-actions">
+
+            <a
+                href="{% url 'home' %}"
+                class="login-button"
+            >
+                Home
+            </a>
+            
+        </div>
+    </nav>
+
+    <main class="video-page">
+
+        <!-- Video -->
+        
+        <div class="video-player">
+            <video
+                controls
+                poster="{{ video.thumbnail.url }}">
+
+                <source src="{{ video.video_file.url }}">
+
+                Your browser does not support the video tag.
+
+            </video>
+
+        </div>
+
+        <!-- Video Information -->
+
+        <section class="video-info">
+
+            <h1>
+                {{ video.title }}
+            </h1>
+
+            <div class="video-owner">
+
+                <span>Uploaded by:</span>
+
+                <a
+                    href="{% url 'user_profile' video.user.id %}"
+                    class="user-link"
+                >
+                    {{ video.user.username }}
+                </a>
+                
+            </div>
+
+            <p class="views">
+                {{ video.views_count }} views
+            </p>
+
+            <p class="description">
+                {{ video.description }}
+            </p>
+
+            <!-- Reactions -->
+
+            <div class="reactions">
+
+                <form
+                    method="post"
+                    action="{% url 'react_to_video' video.id %}"
+                    class="reaction-form"
+                    id="reaction-form"
+                >
+
+                    {% csrf_token %}
+
+                    <button
+                        type="submit"
+                        name="reaction"
+                        value="like"
+                        id="like-button"
+                    >
+                        👍 Like <span id="likes-count">{{ likes_count }}</span>
+                    </button>
+
+                    <button
+                        type="submit"
+                        name="reaction"
+                        value="dislike"
+                        id="dislike-button"
+                    >
+                        👎 Dislike <span id="dislikes-count">{{ dislikes_count }}</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        id="share-button"
+                    >
+                        🔗 Share
+                    </button>
+
+                    <span
+                        id="share-message"
+                        class="share-message"
+                    ></span>
+
+                </form>
+
+            </div>
+
+        </section>
+
+        <!-- Comments -->
+
+        <section class="comments-section">
+
+            <h2>Comments</h2>
+
+            {% if user.is_authenticated %}
+
+                <form
+                    method="post"
+                    action="{% url 'comments' video.id %}"
+                    class="comment-form"
+                    id="comment-form"
+                >
+
+                    {% csrf_token %}
+
+                    <textarea
+                        name="text"
+                        id="comment-text"
+                        placeholder="Write a comment..."
+                        required
+                    ></textarea>
+
+                    <button
+                        type="submit"
+                        id="comment-submit"
+                    >
+                        Post Comment
+                    </button>
+
+                </form>
+            
+            {% else %}
+
+                <p class="login-message">
+                    Please login to write a comment.
+                </p>
+            
+            {% endif %}
+
+            <div class="comments-list" id="comments-list">
+
+                {% for comment in comments %}
+
+                    <div class="comment">
+
+                        <div class="comment-header">
+
+                            <strong>
+                                {{ comment.user.username }}
+                            </strong>
+
+                            <span>
+                                {{ comment.created_at|date:"d M Y" }}
+                            </span>
+
+                        </div>
+
+                        <p>
+                            {{ comment.text }}
+                        </p>
+
+                    </div>
+
+                {% empty %}
+
+                    <p class="empty-comments">
+                        No Comments yet.
+                    </p>
+                
+                {% endfor %}
+                
+            </div>
+
+        </section>
+
+    </main>
+
+    <script src="{% static 'videos/js/video_detail.js' %}"></script>
+
+</body>
+
+</html>

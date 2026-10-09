@@ -1,0 +1,136 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width,initial-scale=1.0"
+    >
+
+    <title>Edit Video</title>
+
+    <link
+        rel="stylesheet"
+        href="{% static 'videos/css/edit_video.css' %}"
+    >
+
+</head>
+
+<body>
+    
+    <nav class="navbar">
+        <div class="logo">
+            VideoPlatform
+        </div>
+
+        <a href="{% url 'dashboard' %}">
+            Dashboard
+        </a>
+
+    </nav>
+
+    <main class="edit-page">
+
+        <section class="edit-card">
+
+            <h1>
+                Edit Video
+            </h1>
+
+            <p class="subtitle">
+                Update your video information
+            </p>
+
+            <form
+                method="post"
+                enctype="multipart/form-data"
+            >
+                {% csrf_token %}
+
+                <div class="form-group">
+
+                    <label for="title">
+                        Video Title
+                    </label>
+
+                    <input
+                        type="text"
+                        id="title"
+                        name="title"
+                        value="{{ video.title }}"
+                        required
+                    >
+
+                </div>
+
+                <div class="form-group">
+
+                    <label for="description">
+                        Description
+                    </label>
+
+                    <textarea
+                        id="description"
+                        name="description"
+                        required
+                    >{{ video.description }}</textarea>
+
+                </div>
+
+                <div class="form-group">
+
+                    <label for="video_file">
+                        Replace Video
+                    </label>
+
+                    <input
+                        type="file"
+                        id="video_file"
+                        name="video_file"
+                        accept="video/*"
+                    >
+
+                </div>
+
+                <div class="form-group">
+                    <label for="thumbnail">
+                        Replace Thumbnail
+                    </label>
+
+                    <input
+                        type="file"
+                        id="thumbnail"
+                        name="thumbnail"
+                        accept="image/*"
+                    >
+
+                </div>
+
+                <button
+                    type="submit"
+                    class="save-button"
+                >
+                    Save Changes
+                </button>
+
+                <a
+                    href="{% url 'dashboard' %}"
+                    class="cancel-button"
+                >
+                    Cancel
+                </a>
+
+            </form>
+
+        </section>
+
+    </main>
+    
+</body>
+
+</html>

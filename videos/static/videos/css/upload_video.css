@@ -1,0 +1,145 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    background-color: #f5f5f5;
+    color: #222;
+}
+
+/* Navbar */
+
+.navbar {
+    height: 60px;
+    background-color: white;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 30px;
+    border-bottom: 1px solid #eee;
+}
+
+.logo {
+    font-size: 20px;
+    font-weight: bold;
+}
+
+.navbar a {
+    text-decoration: none;
+    color: #333;
+}
+
+/* Upload Page */
+
+.upload-page {
+    max-width: 700px;
+    margin: 40px auto;
+    padding: 0 20px;
+}
+
+/* Upload Card */
+
+.upload-card {
+    background-color: white;
+    padding: 30px;
+    border-radius: 10px;
+}
+
+.upload-card h1 {
+    font-size: 28px;
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: #777;
+    margin-bottom: 30px;
+}
+
+.error-message {
+    margin-bottom: 15px;
+    padding: 10px 12px;
+
+    background-color: #fee2e2;
+    color: #b91c1c;
+
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+
+    font-size: 14px;
+}
+
+/* Form */
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.form-group input,
+.form-group textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 15px;
+}
+
+.form-group textarea {
+    min-height: 130px;
+    resize: vertical;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #999;
+}
+
+/* Upload Button */
+
+.upload-button {
+    border: none;
+    padding: 12px 20px;
+    border-radius: 8px;
+    background-color: #222;
+    color: white;
+    cursor: pointer;
+    font-size: 15px;
+}
+
+.upload-button:hover {
+    background-color: #444;
+}
+
+/* Responsive */
+
+@media (max-width: 600px) {
+
+    .navbar {
+        padding: 0 15px;
+    }
+
+    .upload-page {
+        margin: 20px auto;
+        padding: 0 10px;
+    }
+
+    .upload-card {
+        padding: 20px;
+    }
+
+    .upload-card h1 {
+        font-size: 24px;
+    }
+
+}

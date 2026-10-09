@@ -1,0 +1,182 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Dashboard</title>
+
+    <link
+        rel="stylesheet"
+        href="{% static 'videos/css/dashboard.css' %}"
+    >
+
+</head>
+
+<body>
+
+    <nav class="navbar">
+
+        <div class="logo">
+            <a href="{% url 'home' %}">
+                VideoPlatform
+            </a>
+        </div>
+
+        <div class="navbar-actions">
+
+            <a
+                href="{% url 'home' %}"
+                class="login-button"
+            >
+                Home
+            </a>
+
+            <a 
+                href="{% url 'edit_profile' %}"
+                class="login-button"
+            >
+                Edit Profile
+            </a>
+
+            <form
+                method="post"
+                action="{% url 'logout' %}"
+                class="logout-form"
+            >
+                {% csrf_token %}
+
+                <button 
+                    type="submit"
+                    class="login-button logout-button"
+                >
+                    Logout
+                </button>
+
+            </form>
+            
+        </div>
+
+    </nav>
+
+
+    <main class="dashboard">
+
+        <h1>
+            Dashboard
+        </h1>
+
+        <p class="welcome">
+            Welcome, {{ request.user.username }}
+        </p>
+
+
+        <section class="dashboard-card">
+
+            <h2>
+                Upload Video
+            </h2>
+
+            <p>
+                Upload a new video to your channel.
+            </p>
+
+            <a
+                href="{% url 'upload_video' %}"
+                class="upload-button"
+            >
+                Upload Video
+            </a>
+
+        </section>
+
+
+        <section class="dashboard-card">
+
+            <h2>
+                My Videos
+            </h2>
+
+            <p>
+                Manage your uploaded videos.
+            </p>
+
+            <div class="my-videos">
+
+                {% for video in videos %}
+
+                    <div class="my-video">
+
+                        {% if video.thumbnail %}
+
+                            <img
+                                src="{{ video.thumbnail.url }}"
+                                alt="{{ video.title }}"
+                            >
+
+                        {% endif %}
+
+                        <div class="my-video-info">
+
+                            <h3>
+                                {{ video.title }}
+                            </h3>
+
+                            <p>
+                                {{ video.views_count }} views
+                            </p>
+
+                            <div class="video-actions">
+
+                                <a
+                                    href="{% url 'video_detail' video.id %}"
+                                    class="watch-link"
+                                >
+                                    Watch Video
+                                </a>
+
+                                <a
+                                    href="{% url 'edit_video' video.id %}"
+                                    class="edit-link"
+                                >
+                                    Edit
+                                </a>
+
+                                <a
+                                    href="{% url 'delete_video' video.id %}"
+                                    class="delete-link"
+                                >
+                                    Delete
+                                </a>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+                
+                {% empty %}
+
+                    <p>
+                        You haven't uploaded any videos yet.
+                    </p>
+                
+                {% endfor %}
+
+            </div>
+
+        </section>
+
+    </main>
+
+</body>
+
+</html>

@@ -1,0 +1,355 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta 
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>VideoPlatform</title>
+
+    <link
+        rel="stylesheet"
+        href="{% static 'videos/css/style.css' %}"
+    >
+    
+</head>
+
+<body>
+
+    <!-- Navbar -->
+
+    <nav class="navbar">
+
+        <div class="logo">
+            VideoPlatform
+        </div>
+
+        <form
+            method="get"
+            action="{% url 'home' %}"
+            class="search-box"
+        >
+            <input
+                type="text"
+                name="q"
+                placeholder="Search videos"
+                value="{{ query|default:'' }}"
+            >
+            
+            <button type="submit">
+                Search
+            </button>
+
+        </form>
+
+        {% if request.user.is_authenticated %}
+
+            <div class="navbar-actions">
+
+                <a   
+                    href="{% url 'dashboard' %}"
+                    class="login-button"
+                >   
+                    Dashboard
+                </a>
+
+                <a   
+                    href="{% url 'edit_profile' %}"
+                    class="login-button"
+                >   
+                    Edit Profile
+                </a>
+
+                <form
+                    method="post"
+                    action="{% url 'logout' %}"
+                    class="logout-form"
+                >
+                    {% csrf_token %}
+
+                    <button
+                        type="submit"
+                        class="logout-button"
+                    >
+                        Logout
+                    </button>
+                    
+                </form>
+
+            </div>
+        
+        {% else %}
+
+            <div class="auth-buttons">
+
+                <a 
+                    href="{% url 'login' %}"
+                    class="login-button"
+                >
+                    Login
+                </a>
+
+                <a
+                    href="{% url 'register' %}"
+                    class="register-button"
+                > 
+                    Register
+                </a>
+
+            </div>
+
+        {% endif %}
+
+    </nav>
+
+
+    <!-- Main Content -->
+
+    <main class="container">
+
+        {% if trending_videos %}
+
+            <section class="trending_section">
+
+                <h1 class="page-title">
+                    🔥 Trending Videos
+                </h1>
+
+                <div class="video-grid">
+
+                    {% for video in trending_videos %}
+
+                        <div class="video-card">
+
+                            {% if video.thumbnail %}
+
+                                <a href="{% url 'video_detail' video.id %}">
+
+                                    <img 
+                                        class="thumbnail"
+                                        src="{{ video.thumbnail.url }}"
+                                        alt="{{ video.title }}"
+
+                                    >
+
+                                </a>
+
+                            {% endif %}
+
+                            <div class="video-info">
+
+                                <h2 class="video-title">
+
+                                    <a href="{% url 'video_detail' video.id %}">
+                                        {{ video.title }}
+                                    </a>
+
+                                </h2>
+
+                                <p class="video-meta">
+                                    {{ video.views_count }} views
+                                    •
+                                    
+                                    <a
+                                        href="{% url 'user_profile' video.user.id %}"
+                                        class="user-link"
+                                    >
+                                        {{ video.user.username}}
+                                    </a>
+                                    
+                                </p>
+
+                                {% if video.category %}
+
+                                    <p class="video-category">
+                                        {{ video.category.name }}
+                                    </p>
+                                {% endif %}
+
+                            </div>
+
+                        </div>
+
+                    {% endfor %}
+
+                </div>
+
+            </section>
+        
+        {% endif %}
+
+        <h1 class="page-title">
+            Latest Videos
+        </h1>
+
+        <div class="categories">
+
+            <a
+                href="?q={{ query|urlencode }}"
+                class="category-button
+                {% if not selected_category %}active{% endif %}"
+            >
+                All
+            </a>
+
+            {% for category in categories %}
+
+                <a
+                    href="?q={{ query|urlencode }}&category={{ category.id }}"
+                    class="category-button
+                    {% if selected_category == category.id|stringformat:'s' %}
+                        active
+                    {% endif %}"
+                >
+                    {{ category.name }}
+                </a>
+            
+            {% endfor %}
+
+        </div>
+
+        <div class="video-grid">
+
+            {% for video in video_list %}
+
+                <!-- video card -->
+
+                <div class="video-card">
+
+                    {% if video.thumbnail %}
+
+                        <a href="{% url 'video_detail' video.id %}">
+
+                            <img
+                                class="thumbnail"
+                                src="{{ video.thumbnail.url }}"
+                                alt="{{ video.title }}"
+                            >
+
+                        </a>
+
+                    {% endif %}
+
+
+                    <div class="video-info">
+
+                        <h2 class="video-title">
+
+                            <a href="{% url 'video_detail' video.id %}">
+                                {{ video.title }}
+                            </a>
+
+                        </h2>
+
+                        <p class="video-meta">
+                            {{ video.views_count }} views
+                            •
+                            
+                            <a 
+                                href="{% url 'user_profile' video.user.id %}"
+                                class="user-link"
+                            >
+                                {{ video.user.username }}
+                            </a>
+
+                        </p>
+
+                        {% if video.category %}
+
+                            <p class="video-category">
+                                {{ video.category.name }}
+                            </p>
+                        
+                        {% endif %}
+
+                        <p class="video-date">
+                            {{ video.created_at|date:"M d,Y "}}
+                        </p>
+
+                    </div>
+
+                </div>
+
+            {% empty %}
+
+                <div class="no-results">
+
+                    {% if query %}
+                     
+                        <p>
+                            No videos found for "{{ query }}".
+                        </p>
+                    
+                    {% else %}
+
+                        <p>
+                            No videos available.
+                        </p>
+
+                    {% endif %}
+
+                </div>
+
+            {% endfor %}
+
+        </div>
+
+        <div class="pagination">
+
+            {% if page_obj.has_previous %}
+
+                <a
+                    href="?q={{ query|urlencode }}&category={{ selected_category|default:'' }}
+                    &page={{ page_obj.previous_page_number }}"
+                >
+                    Previous
+                </a>
+
+            {% endif %}
+
+            {% for num in page_obj.paginator.page_range %}
+
+                {% if page_obj.number == num %}
+
+                    <span class="current-page">
+                        {{ num }}
+                    </span>
+                
+                {% else %}
+
+                    <a
+                        href="?q={{ query|urlencode }}&category={{ selected_category|default:'' }}
+                        &page={{ num }}"
+                    >
+                        {{ num }}
+                    </a>
+                
+                {% endif %}
+
+            {% endfor %}
+
+            {% if page_obj.has_next %}
+
+                <a
+                    href="?q={{ query|urlencode }}&category={{ selected_category|default:'' }}
+                    &page={{ page_obj.next_page_number }}"
+                >
+                    Next
+                </a>
+
+            {% endif %}
+
+        </div>
+
+    </main>
+
+</body>
+
+</html>

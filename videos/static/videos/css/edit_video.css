@@ -1,0 +1,136 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    background-color: #f5f5f5;
+    color: #222;
+}
+
+.navbar {
+    height: 60px;
+    background-color: white;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 30px;
+    border-bottom: 1px solid #eee;
+}
+
+.logo {
+    font-size: 20px;
+    font-weight: bold;
+}
+
+.navbar a {
+    text-decoration: none;
+    color: #333;
+}
+
+.edit-page {
+    max-width: 700px;
+    margin: 40px auto;
+    padding: 0 20px;
+}
+
+.edit-card {
+    background-color: white;
+    padding: 30px;
+    border-radius: 10px;
+}
+
+.edit-card h1 {
+    font-size: 28px;
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: #777;
+    margin-bottom: 30px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.form-group input,
+.form-group textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 15px;
+}
+
+.form-group textarea {
+    min-height: 130px;
+    resize: vertical;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #999;
+}
+
+.save-button,
+.cancel-button {
+    display: inline-block;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 15px;
+    text-decoration: none;
+}
+
+.save-button {
+    border: none;
+    background-color: #222;
+    color: white;
+    cursor: pointer;
+}
+
+.save-button:hover {
+    background-color: #444;
+}
+
+.cancel-button {
+    margin-left: 10px;
+    background-color: #eee;
+    color: #333;
+}
+
+.cancel-button:hover {
+    background-color: #ddd;
+}
+
+@media (max-width: 600px) {
+
+    .navbar {
+        padding: 0 15px;
+    }
+
+    .edit-page {
+        margin: 20px auto;
+        padding: 0 10px;
+    }
+
+    .edit-card {
+        padding: 20px;
+    }
+
+    .edit-card h1 {
+        font-size: 24px;
+    }
+
+}

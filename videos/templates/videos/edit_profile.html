@@ -1,0 +1,118 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        Edit Profile - VideoPlatform
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="{% static 'videos/css/style.css' %}"
+    >
+
+</head>
+
+<body>
+
+    <nav class="navbar">
+
+        <div class="logo">
+
+            <a href="{% url 'home' %}">
+                VideoPlatform
+            </a>
+
+        </div>
+
+        <a
+            href="{% url 'user_profile' request.user.id %}"
+            class="login-button"
+        >
+            Back to Profile
+        </a>
+
+    </nav>
+
+
+    <main class="container">
+
+        <section class="edit-profile">
+
+            <h1>
+                Edit Profile
+            </h1>
+
+            {% if profile.profile_image %}
+
+                <img
+                    src="{{ profile.profile_image.url }}"
+                    alt="{{ request.user.username }}"
+                    class="edit-profile-image"
+                >
+
+            {% else %}
+
+                <div class="edit-profile-placeholder">
+                    {{ request.user.username|first|upper }}
+                </div>
+
+            {% endif %}
+
+
+            <form
+                method="post"
+                enctype="multipart/form-data"
+            >
+
+                {% csrf_token %}
+
+                <label for="bio">
+                    Bio
+                </label>
+
+                <textarea 
+                    id="bio"
+                    name="bio"
+                    rows="5"
+                    maxlength="500"
+                    placeholder="Tell us about yourself..."
+                >{{ profile.bio }}</textarea>
+
+                <label for="profile_image">
+                    Profile Picture
+                </label>
+
+                <input
+                    type="file"
+                    id="profile_image"
+                    name="profile_image"
+                    accept="image/*"
+                >
+
+                <button
+                    type="submit"
+                    class="subscribe-button"
+                >
+                    Save Profile
+                </button>
+
+            </form>
+
+        </section>
+
+    </main>
+
+</body>
+
+</html>

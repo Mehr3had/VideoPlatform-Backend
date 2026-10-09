@@ -1,0 +1,30 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+
+# Environment variables and secrets
+.env
+.env.*
+
+# Local database
+db.sqlite3
+
+# Uploaded media - keep large videos out of Git
+media/videos/
+
+# IDE
+.vscode/
+.idea/
+
+# Test and cache
+.pytest_cache/
+.coverage
+
+# User profile images
+media/profile_images/

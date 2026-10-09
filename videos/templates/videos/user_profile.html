@@ -1,0 +1,202 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>{{ profile_user.username }} - VideoPlatform</title>
+
+    <link
+        rel="stylesheet"
+        href="{% static 'videos/css/style.css' %}"
+    >
+
+</head>
+
+<body>
+
+    <nav class="navbar">
+
+        <div class="logo">
+            <a href="{% url 'home' %}">
+                VideoPlatform
+            </a>
+        </div>
+
+        <a
+            href="{% url 'home' %}"
+            class="login-button"
+        >
+            Home
+        </a>
+
+    </nav>
+
+
+    <main class="container">
+
+        <section class="profile-header">
+
+            {% if profile_user.profile.profile_image %}
+
+                <img    
+                    src="{{ profile_user.profile.profile_image.url }}"
+                    alt="{{ profile_user.username }}"
+                    class="profile-avatar"
+                >
+            
+            {% else %}
+
+                <div class="profile-avatar">
+                    {{ profile_user.username|first|upper }}
+                </div>
+
+            {% endif %}
+
+            <div class="profile-info">
+
+                <h1>
+                    {{ profile_user.username }}
+                </h1>
+
+                <p>
+                    {{ videos|length }} videos
+                    •
+                    {{ subscribers_count }} subscribers
+                </p>
+
+                {% if profile_user.profile.bio %}
+
+                    <p class="profile-bio">
+                        {{ profile_user.profile.bio }}
+                    </p>
+                
+                {% endif %}
+
+                {% if request.user.is_authenticated %}
+
+                    {% if request.user.id != profile_user.id %}
+
+                        <form 
+                            method="post"
+                            action="{% url 'toggle_subscription' profile_user.id %}"
+                        >
+
+                            {% csrf_token %}
+
+                            {% if is_subscribed %}
+
+                                <button
+                                    type="submit"
+                                    class="unsubscribe-button"
+                                >
+                                    Unsubscribe
+                                </button>
+
+                            {% else %}
+
+                                <button
+                                    type="submit"
+                                    class="subscribe-button"
+                                >
+                                    Subscribe
+                                </button>
+                            
+                            {% endif %}
+
+                        </form>
+                    
+                    {% endif %}
+                    
+                {% else %}
+
+                    <a
+                        href="{% url 'login' %}"
+                        class="subscribe-button"
+                    >
+                        Login to Subscribe
+                    </a>
+
+                {% endif %}
+
+            </div>
+
+        </section>
+
+        <h2 class="page-title">
+            Videos
+        </h2>
+
+        <div class="video-grid">
+
+            {% for video in videos %}
+
+                <div class="video-card">
+
+                    {% if video.thumbnail %}
+
+                        <a
+                            href="{% url 'video_detail' video.id %}"
+                        >
+
+                            <img
+                                class="thumbnail"
+                                src="{{ video.thumbnail.url }}"
+                                alt="{{ video.title }}"
+                            >
+
+                        </a>
+
+                    {% endif %}
+
+                    <div class="video-info">
+
+                        <h2 class="video-title">
+
+                            <a
+                                href="{% url 'video_detail' video.id %}"
+                            >
+                                {{ video.title }}
+                            </a>
+
+                        </h2>
+
+                        <p class="video-meta">
+                            {{ video.views_count }} views
+                        </p>
+
+                        {% if video.category %}
+
+                            <p class="video-category">
+                                {{ video.category.name }}
+                            </p>
+
+                        {% endif %}
+
+                    </div>
+
+                </div>
+
+            {% empty %}
+
+                <p>
+                    This user hasn't uploaded any videos yet.
+                </p>
+
+            {% endfor %}
+
+        </div>
+
+    </main>
+
+</body>
+
+</html>

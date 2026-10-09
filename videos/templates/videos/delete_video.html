@@ -1,0 +1,83 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Delete Video</title>
+
+    <link
+        rel="stylesheet"
+        href="{% static 'videos/css/delete_video.css' %}"
+    >
+
+</head>
+
+<body>
+
+    <nav class="navbar">
+
+        <div class="logo">
+            VideoPlatform
+        </div>
+
+        <a href="{% url 'dashboard' %}">
+            Dashboard
+        </a>
+
+    </nav>
+
+
+    <main class="delete-page">
+
+        <section class="delete-card">
+
+            <h1>
+                Delete Video
+            </h1>
+
+            <p>
+                Are you sure you want to delete
+                <strong>{{ video.title }}</strong>?
+            </p>
+
+            <p class="warning">
+                This action cannot be undone.
+            </p>
+
+
+            <form method="post">
+
+                {% csrf_token %}
+
+                <button
+                    type="submit"
+                    class="delete-button"
+                >
+                    Delete Video
+                </button>
+
+                <a
+                    href="{% url 'dashboard' %}"
+                    class="cancel-button"
+                >
+                    Cancel
+                </a>
+
+            </form>
+
+        </section>
+
+    </main>
+
+</body>
+
+</html>

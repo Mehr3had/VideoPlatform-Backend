@@ -1,0 +1,143 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Upload Video</title>
+
+    <link
+        rel="stylesheet"
+        href="{% static 'videos/css/upload_video.css' %}"
+    >
+
+</head>
+
+<body>
+
+    <nav class="navbar">
+
+        <div class="logo">
+            VideoPlatform
+        </div>
+
+        <a href="{% url 'dashboard' %}">
+            Dashboard
+        </a>
+
+    </nav>
+
+
+    <main class="upload-page">
+
+        <section class="upload-card">
+
+            <h1>
+                Upload Video
+            </h1>
+
+            <p class="subtitle">
+                Share your video with the world.
+            </p>
+
+            {% if error %}
+
+                <p class="error-message">
+                    {{ error }}
+                </p>
+
+            {% endif %}
+            
+            <form
+                method="post"
+                enctype="multipart/form-data"
+            >
+
+                {% csrf_token %}
+
+                <div class="form-group">
+
+                    <label for="title">
+                        Video Title
+                    </label>
+
+                    <input
+                        type="text"
+                        id="title"
+                        name="title"
+                        placeholder="Enter video title"
+                        required
+                    >
+
+                </div>
+
+                <div class="form-group">
+
+                    <label for="description">
+                        Description
+                    </label>
+
+                    <textarea
+                        id="description"
+                        name="description"
+                        placeholder="Enter video description"
+                        required
+                    ></textarea>
+
+                </div>
+
+                <div class="form-group">
+
+                    <label for="video_file">
+                        Video File
+                    </label>
+
+                    <input
+                        type="file"
+                        id="video_file"
+                        name="video_file"
+                        accept="video/*"
+                        required
+                    >
+
+                </div>
+
+                <div class="form-group">
+
+                    <label for="thumbnail">
+                        Thumbnail
+                    </label>
+
+                    <input
+                        type="file"
+                        id="thumbnail"
+                        name="thumbnail"
+                        accept="image/*"
+                    >
+
+                </div>
+
+                <button
+                    type="submit"
+                    class="upload-button"
+                >
+                    Upload Video
+                </button>
+
+            </form>
+
+        </section>
+
+    </main>
+
+</body>
+
+</html>
