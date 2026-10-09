@@ -1,129 +1,141 @@
-# VideoPlatform — Frontend
+# VideoPlatform — Django REST API
 
-A video-sharing platform frontend built with **Next.js, React, and TypeScript**, integrated with a Django REST API backend.
-
-## Features
-
-* **Authentication:** User registration and login with JWT-based authentication.
-* **Video browsing:** Browse videos, search content, filter by category, and explore trending videos.
-* **Video playback:** Watch videos and interact through likes, dislikes, and comments.
-* **User profiles:** View user profiles, browse uploaded videos, and manage subscriptions.
-* **Creator dashboard:** Upload videos, edit existing videos, and manage uploaded content.
-* **Account settings:** Update profile information and manage account credentials.
-* **Responsive interface:** A component-based UI designed for a video-sharing experience.
-
-## Tech Stack
-
-* Next.js (App Router)
-* React
-* TypeScript
-* Tailwind CSS
-* Django REST Framework
-* JWT authentication
+A video-sharing platform backend built with Django and Django REST Framework. It provides APIs for authentication, video management, reactions, comments, user profiles, subscriptions, search, categories, and pagination.
 
 ## Related Repository
 
 * **Backend:** [VideoPlatform-Backend](https://github.com/Mehr3had/VideoPlatform-Backend)
+* **Frontend:** [VideoPlatform-Frontend](https://github.com/Mehr3had/VideoPlatform-Frontend)
 
-## Prerequisites
+## Tech Stack
 
-Make sure the following tools are installed:
+* Python
+* Django
+* Django REST Framework
+* Simple JWT
+* SQLite
+* Pillow
+* django-cors-headers
 
-* Node.js and npm
-* Git
-* The [VideoPlatform backend](https://github.com/Mehr3had/VideoPlatform-Backend), running locally
+## Features
+
+* User registration and JWT authentication
+* User profiles and profile editing
+* Video upload, playback, editing, and deletion
+* Video thumbnails and view counts
+* Trending videos
+* Likes and dislikes
+* Comments
+* User subscriptions
+* Search, categories, and pagination
+* User dashboard and account settings
+* Integration with a Next.js frontend
 
 ## Getting Started
+
+### Prerequisites
+
+* Python compatible with the installed Django version
+* Git
+* Node.js and npm if you also want to run the frontend
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Mehr3had/VideoPlatform-Frontend.git
-cd VideoPlatform-Frontend
+git clone https://github.com/Mehr3had/VideoPlatform-Backend.git
+cd VideoPlatform-Backend
 ```
 
-### 2. Install dependencies
+### 2. Create a virtual environment
 
-```bash
-npm install
+On Windows PowerShell:
+
+```powershell
+py -m venv venv
+.\venv\Scripts\Activate.ps1
 ```
 
-### 3. Configure environment variables
+### 3. Install dependencies
 
-Create a `.env.local` file in the project root:
+```powershell
+python -m pip install -r requirements.txt
+```
+
+### 4. Configure environment variables
+
+Create a `.env` file in the project root:
+
+```dotenv
+DJANGO_SECRET_KEY=your-generated-secret-key
+```
+
+Generate a new secret key:
+
+```powershell
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
+
+Copy the generated key into `.env`. Never commit this file or share its contents.
+
+### 5. Apply database migrations
+
+```powershell
+python manage.py migrate
+```
+
+This creates the local SQLite database and applies the project's migrations.
+
+### 6. Start the development server
+
+```powershell
+python manage.py runserver
+```
+
+The backend runs at:
+
+`http://127.0.0.1:8000/`
+
+API endpoints are available under `/videos/api/`.
+
+## Frontend Integration
+
+The frontend is built with Next.js and runs locally at `http://localhost:3000`.
+
+Configure the frontend's `.env.local` file with:
 
 ```env
 NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 ```
 
-This variable defines the base URL of the Django backend. Update it if the backend runs at a different address.
+The frontend uses this value as the base URL for backend API requests and resource URLs.
 
-The frontend uses this variable to construct API endpoints and backend resource URLs.
+Django must allow requests from `http://localhost:3000` through its CORS configuration.
 
-**Security note:** Variables prefixed with `NEXT_PUBLIC_` can be exposed to the browser. Never store passwords, secret keys, or private credentials in them.
+See the [frontend repository](https://github.com/Mehr3had/VideoPlatform-Frontend) for frontend setup instructions.
 
-### 4. Start the backend
+## Media Files and Local Data
 
-Follow the setup instructions in the [backend repository](https://github.com/Mehr3had/VideoPlatform-Backend).
+Sample thumbnail images are included in the repository. Video files, uploaded profile images, and the local SQLite database are not included.
 
-Make sure the Django database migrations have been applied and the backend is running at `http://127.0.0.1:8000`.
+After applying migrations, create an account through the registration endpoint or create an administrator with:
 
-### 5. Start the frontend
-
-```bash
-npm run dev
+```powershell
+python manage.py createsuperuser
 ```
 
-Open http://localhost:3000 in your browser.
+Upload your own video files to test video playback and media-related features.
 
-Make sure Django allows requests from `http://localhost:3000` through its CORS configuration.
+## Security Notes
 
-**Note:** The local database and uploaded video files are not included in this repository. You may need to create an account and upload sample videos to test all features.
+* Keep `.env` out of version control.
+* Use a unique secret key.
+* `DEBUG=True` is intended for local development only.
+* Configure `ALLOWED_HOSTS`, HTTPS, database settings, and media storage before production deployment.
+* Never publish real credentials, secret keys, or authentication tokens.
 
-## Production Build
+## Project Status
 
-To create an optimized production build:
-
-```bash
-npm run build
-```
-
-To run the production build locally:
-
-```bash
-npm run start
-```
-
-## Project Structure
-
-```text
-src/
-├── app/
-│   ├── dashboard/
-│   │   ├── edit/[id]/
-│   │   └── upload/
-│   ├── login/
-│   ├── profile/
-│   │   ├── [id]/
-│   │   └── edit/
-│   ├── register/
-│   ├── settings/
-│   └── videos/[id]/
-├── components/
-│   └── Navbar.tsx
-└── lib/
-    └── api.ts
-```
-
-## Backend Integration
-
-The frontend communicates with a Django REST API. The API base URL is configured through `NEXT_PUBLIC_API_URL` and centralized in `src/lib/api.ts`.
-
-For local development, the backend and frontend typically run on ports `8000` and `3000`, respectively. The backend must be running for API-dependent features to work.
-
-## Status
-
-This project is a full-stack learning and portfolio project and is under development.
+A full-stack learning and portfolio project focused on Django REST APIs, authentication, media handling, and integration with a Next.js frontend.
 
 ## License
 
