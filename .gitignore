@@ -17,6 +17,7 @@ db.sqlite3
 
 # Uploaded media - keep large videos out of Git
 media/videos/
+media/thumbnails/
 
 # IDE
 .vscode/

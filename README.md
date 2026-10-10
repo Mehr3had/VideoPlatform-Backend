@@ -115,15 +115,13 @@ See the [frontend repository](https://github.com/Mehr3had/VideoPlatform-Frontend
 
 ## Media Files and Local Data
 
-Sample thumbnail images are included in the repository. Video files, uploaded profile images, and the local SQLite database are not included.
+Uploaded video files, thumbnail images, profile images, and the local SQLite database are excluded from version control. A fresh clone will not contain the media files or the sample content created through Django Admin.
 
 After applying migrations, create an account through the registration endpoint or create an administrator with:
 
-```powershell
 python manage.py createsuperuser
-```
 
-Upload your own video files to test video playback and media-related features.
+Create categories and upload your own video files and thumbnails through Django Admin or the available API endpoints to test media-related features.
 
 ## Security Notes
 
