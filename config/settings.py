@@ -150,3 +150,7 @@ LOGIN_URL = "/videos/login/"
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
 ]
+
+DEFAULT_FROM_EMAIL = "noreply@videoplatform.local"
+
+PASSWORD_RESET_TIMEOUT = 900
