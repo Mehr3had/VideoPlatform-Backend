@@ -8,21 +8,24 @@ from rest_framework import status # type: ignore
 from django.contrib.auth import authenticate,login as auth_login # type: ignore
 from django.contrib.auth import logout # type: ignore
 from rest_framework_simplejwt.tokens import RefreshToken # type: ignore
-from rest_framework.permissions import IsAuthenticated,IsAdminUser # type: ignore
+from rest_framework_simplejwt.exceptions import TokenError, InvalidToken # type: ignore
+from rest_framework.permissions import IsAuthenticated,IsAdminUser,AllowAny # type: ignore
 from rest_framework.decorators import api_view,permission_classes # type: ignore
 from django.db.models import Q # type: ignore
 from django.core.paginator import Paginator # type: ignore
 from django.utils import timezone # type: ignore
 from datetime import timedelta
 from rest_framework.pagination import PageNumberPagination # type: ignore
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer # type: ignore
 from django.db.models import F # type: ignore
 from django.core.mail import send_mail # type: ignore
-from django.conf import settings # type: ignore
+from django.conf import settings  # type: ignore
 from django.contrib.auth.tokens import default_token_generator # type: ignore
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode # type: ignore
 from django.utils.encoding import force_bytes # type: ignore
 from django.db import transaction # type: ignore
 from django.core.files.storage import default_storage
+from .translations import MESSAGES, get_messages
 import os
 import logging
 
@@ -48,11 +51,15 @@ def notify_subscribers_new_video(video):
         if not preferences.new_videos_enabled:
             continue
 
+        message = (
+            f'{video.user.username} uploaded a new video: {video.title}'
+        )
+
         Notification.objects.create(
             recipient=subscriber,
             sender=video.user,
             notification_type=Notification.NotificationType.NEW_VIDEO,
-            message=f'{video.user.username} uploaded a new video: {video.title}',
+            message=message,
             video=video
         )
 
@@ -349,112 +356,17 @@ def react_to_video(request, video_id):
         "dislikes_count": dislikes_count
     })
 
-def register(request):
-
-    if request.method == "POST":
-
-        username = request.POST.get("username", "").strip()
-        email = request.POST.get("email", "").strip().lower()
-        password = request.POST.get("password", "")
-
-        # 1. Required fields
-        if not username or not email or not password:
-            return render(
-                request,
-                "videos/register.html",
-                {
-                    "error": "Username, email and password are required."
-                }
-            )
-
-        # 2. Username length
-        if len(username) < 3:
-            return render(
-                request,
-                "videos/register.html",
-                {
-                    "error": "Username must be at least 3 characters."
-                }
-            )
-
-        if len(username) > 30:
-            return render(
-                request,
-                "videos/register.html",
-                {
-                    "error": "Username must be 30 characters or less."
-                }
-            )
-
-        # 3. Email validation
-        try:
-            validate_email(email)
-        except ValidationError:
-            return render(
-                request,
-                "videos/register.html",
-                {
-                    "error": "Please enter a valid email address."
-                }
-            )
-
-        # 4. Email uniqueness
-        if User.objects.filter(email__iexact=email).exists():
-            return render(
-                request,
-                "videos/register.html",
-                {
-                    "error": "This email is already registered."
-                }
-            )
-
-        # 5. Username uniqueness
-        if User.objects.filter(username=username).exists():
-            return render(
-                request,
-                "videos/register.html",
-                {
-                    "error": "Username already exists."
-                }
-            )
-
-        # 6. Password length
-        if len(password) < 8:
-            return render(
-                request,
-                "videos/register.html",
-                {
-                    "error": "Password must be at least 8 characters."
-                }
-            )
-
-        # 7. Create user with email
-        user = User.objects.create_user(
-            username=username,
-            email=email,
-            password=password
-        )
-
-        # 8. Create profile
-        Profile.objects.create(user=user)
-
-        # 9. Log in automatically
-        auth_login(request, user)
-
-        return redirect("home")
-
-    return render(request, "videos/register.html")
-
 @api_view(["POST"])
 def register_api(request):
     username = request.data.get("username", "").strip()
     email = request.data.get("email", "").strip().lower()
     password = request.data.get("password", "")
     password_confirm = request.data.get("password_confirm", "")
+    messages = get_messages(request)
 
     if not username or not email or not password or not password_confirm:
         return Response(
-            {"error": "All fields are required."},
+            {"error": messages["all_fields_required."]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -465,31 +377,31 @@ def register_api(request):
         validate_email(email)
     except ValidationError:
         return Response(
-            {"error": "Please enter a valid email address."},
+            {"error": messages["invalid_email"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if User.objects.filter(email__iexact=email).exists():
         return Response(
-            {"error": "This email is already registered."},
+            {"error": messages["email_exists"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if password != password_confirm:
         return Response(
-            {"error": "Passwords do not match."},
+            {"error": messages["password_mismatch"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if len(password) < 8:
         return Response(
-            {"error": "Password must be at least 8 characters."},
+            {"error": messages["password_too_short"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if User.objects.filter(username=username).exists():
         return Response(
-            {"error": "Username already exists."},
+            {"error": messages["username_exists"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -501,7 +413,7 @@ def register_api(request):
 
     return Response(
         {
-            "message": "Registration successful.",
+            "message": messages["registration_success"],
             "id": user.id,
             "username": user.username,
             "email": user.email,
@@ -555,12 +467,13 @@ def forgot_username_api(request):
 
 @api_view(["POST"])
 def password_reset_request_api(request):
-
+    messages = get_messages(request)
+    print("TRANSLATED MESSAGE:", messages["password_reset_email_message"])
     email = request.data.get("email", "").strip().lower()
 
     if not email:
         return Response(
-            {"error": "Email is required."},
+            {"error": messages["email_required"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -576,16 +489,17 @@ def password_reset_request_api(request):
         )
 
         message = (
-            f"Hello {user.username},\n\n"
-            "We received a request to reset your password.\n\n"
-            f"Open this link to choose a new password:\n{reset_link}\n\n"
-            "If you did not request this, you can ignore this email."
+            f"{messages['password_reset_email_greeting'].format(username=user.username)}\n\n"
+            f"{messages['password_reset_email_intro']}\n\n"
+            f"{messages['password_reset_email_instruction']}\n"
+            f"{reset_link}\n\n"
+            f"{messages['password_reset_email_ignore']}"
         )
 
         print("DEBUG RESET LINK:", reset_link)
 
         send_mail(
-            subject="VideoPlatform - Password Reset",
+            subject=messages["password_reset_email_subject"],
             message=message,
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[user.email],
@@ -593,18 +507,13 @@ def password_reset_request_api(request):
         )
 
     return Response(
-        {
-            "message": (
-                "If an account is associated with this email, "
-                "you will receive password reset instructions."
-            )
-        },
+        {"message": messages["password_reset_email_message"]},
         status=status.HTTP_200_OK
     )
 
 @api_view(["POST"])
 def password_reset_confirm_api(request):
-
+    messages = get_messages(request)
     uid = request.data.get("uid", "")
     token = request.data.get("token", "")
     new_password = request.data.get("new_password", "")
@@ -612,19 +521,19 @@ def password_reset_confirm_api(request):
 
     if not all([uid, token, new_password, password_confirm]):
         return Response(
-            {"error": "All fields are required."},
+            {"error": messages["all_fields_required"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if new_password != password_confirm:
         return Response(
-            {"error": "Passwords do not match."},
+            {"error": messages["passwords_mismatch"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if len(new_password) < 8:
         return Response(
-            {"error": "Password must be at least 8 characters."},
+            {"error": messages["password_too_short"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -633,13 +542,13 @@ def password_reset_confirm_api(request):
         user = User.objects.get(pk=user_id)
     except (TypeError, ValueError, OverflowError, User.DoesNotExist):
         return Response(
-            {"error": "Invalid or expired reset link."},
+            {"error": messages["invalid_reset_link"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if not default_token_generator.check_token(user, token):
         return Response(
-            {"error": "Invalid or expired reset link."},
+            {"error": messages["invalid_reset_link"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -647,91 +556,107 @@ def password_reset_confirm_api(request):
     user.save(update_fields=["password"])
 
     return Response(
-        {"message": "Password has been reset successfully."},
+        {"message": messages["password_reset_success"]},
         status=status.HTTP_200_OK
     )
 
-def login(request):
-
-    if request.method=="POST":
-
-        username=request.POST.get("username","").strip()
-        password=request.POST.get("password","")
-
-        if not username or not password:
-
-            return render(
-                request,
-                "videos/login.html",
-                {
-                    "error":"Username and password are required."
-                }
-            )
-
-        user=authenticate(
-            request,
-            username=username,
-            password=password
-        )
-
-        if user is not None:
-
-            auth_login(request,user)
-
-            return redirect("home")
-
-        return render(
-            request,
-            "videos/login.html",
-            {
-                "error":"Invalid username or password."
-            }
-        )
-
-    return render(
-        request,
-        "videos/login.html"
-    )
-
 @api_view(["POST"])
+@permission_classes([AllowAny])
 def login_api(request):
-
-    username=request.data.get("username", "").strip()
-    password=request.data.get("password", "")
+    messages = get_messages(request)
+    username = request.data.get("username", "").strip()
+    password = request.data.get("password", "")
 
     if not username or not password:
         return Response(
-            {
-                "error": "Username and password are required."
-            },
-            status=status.HTTP_400_BAD_REQUEST
+            {"error": messages["credentials_required"]},
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
-    user=authenticate(
+    user = authenticate(
         request,
         username=username,
-        password=password
+        password=password,
     )
 
     if user is None:
         return Response(
-            {
-                "error": "Invalid username or password."
-            },
-            status=status.HTTP_401_UNAUTHORIZED
+            {"error": messages["invalid_credentials"]},
+            status=status.HTTP_401_UNAUTHORIZED,
         )
 
-    refresh=RefreshToken.for_user(user)
+    refresh = RefreshToken.for_user(user)
 
-    return Response(
+    response = Response(
         {
-            "message":"Login successful",
-            "username":user.username,
-            "access":str(refresh.access_token),
-            "refresh":str(refresh),
+            "message": messages["login_success"],
+            "username": user.username,
+            "access": str(refresh.access_token),
         },
-        status=status.HTTP_200_OK
+        status=status.HTTP_200_OK,
     )
+
+    response.set_cookie(
+        key="refresh_token",
+        value=str(refresh),
+        max_age=7 * 24 * 60 * 60,
+        httponly=True,
+        secure=not settings.DEBUG,
+        samesite="Lax",
+        path="/videos/",
+    )
+
+    return response
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def refresh_token_api(request):
+    refresh_token = request.COOKIES.get("refresh_token")
+
+    if not refresh_token:
+        return Response(
+            {"error": "Refresh token is missing."},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    serializer = TokenRefreshSerializer(
+        data={"refresh": refresh_token}
+    )
+
+    try:
+        is_valid = serializer.is_valid()
+    except (TokenError, InvalidToken):
+        is_valid = False
+
+    if not is_valid:
+        response = Response(
+            {"error": "Session expired. Please log in again."},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+        response.delete_cookie("refresh_token", path="/videos/")
+        return response
+
+    data = serializer.validated_data
+    access_token = data["access"]
+
+    response = Response(
+        {"access": access_token},
+        status=status.HTTP_200_OK,
+    )
+
+    # Replace the cookie when refresh-token rotation is enabled.
+    if "refresh" in data:
+        response.set_cookie(
+            key="refresh_token",
+            value=data["refresh"],
+            max_age=7 * 24 * 60 * 60,
+            httponly=True,
+            secure=not settings.DEBUG,
+            samesite="Lax",
+            path="/videos/",
+        )
+
+    return response
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -835,7 +760,7 @@ def user_videos_api(request, user_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def toggle_subscription_api(request, user_id):
-
+    messages = get_messages(request)
     channel = get_object_or_404(
         User,
         id=user_id
@@ -844,9 +769,7 @@ def toggle_subscription_api(request, user_id):
     if request.user == channel:
 
         return Response(
-            {
-                "error": "You cannot subscribe to yourself."
-            },
+            {"error": messages["subscribe_self"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -858,7 +781,6 @@ def toggle_subscription_api(request, user_id):
     if subscription:
 
         subscription.delete()
-
         subscribed = False
 
     else:
@@ -869,7 +791,6 @@ def toggle_subscription_api(request, user_id):
         )
 
         subscribed = True
-
         notify_subscriber_milestone(channel)
 
     subscribers_count = Subscription.objects.filter(
@@ -889,10 +810,7 @@ def video_list_api(request):
     videos = Video.objects.all().order_by("-created_at")
 
     if search:
-        videos = videos.filter(
-            Q(title__icontains=search) |
-            Q(description__icontains=search)
-        )
+        videos = videos.filter(title__icontains=search)
 
     if category_id:
         videos = videos.filter(category_id=category_id)
@@ -1099,7 +1017,7 @@ def home(request):
 
 @api_view(["GET", "POST"])
 def comments(request, video_id):
-
+    messages = get_messages(request)
     video = get_object_or_404(
         Video,
         id=video_id
@@ -1159,7 +1077,7 @@ def comments(request, video_id):
         if not request.user.is_authenticated:
 
             return Response(
-                {"error": "Authentication required."},
+                {"error": messages["authentication_required"]},
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
@@ -1168,17 +1086,14 @@ def comments(request, video_id):
         if not text:
 
             return Response(
-                {"error": "Comment text is required."},
+                {"error": messages["comment_text_required"]},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         if len(text) > 1000:
 
             return Response(
-                {
-                    "error":
-                    "Comment must be 1000 characters or less."
-                },
+                {"error": messages["comment_too_long"]},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -1192,7 +1107,7 @@ def comments(request, video_id):
             except (TypeError, ValueError):
 
                 return Response(
-                    {"error": "Invalid parent comment ID."},
+                    {"error": messages["invalid_parent_comment_id"]},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -1204,7 +1119,7 @@ def comments(request, video_id):
 
             if parent.is_removed:
                 return Response(
-                    {"error": "You cannot reply to a removed comment."},
+                    {"error": messages["reply_to_removed_comment"]},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -1222,9 +1137,9 @@ def comments(request, video_id):
                 sender=request.user,
                 video=video,
                 comment=comment,
-                message=(
-                    f"{request.user.username} commented on your video: "
-                    f"{text[:180]}"
+                message=messages["notification_comment_on_video"].format(
+                    username=request.user.username,
+                    text=text[:180],
                 ),
                 notification_type=Notification.NotificationType.COMMENT
             )
@@ -1236,9 +1151,9 @@ def comments(request, video_id):
                 sender=request.user,
                 video=video,
                 comment=comment,
-                message=(
-                    f"{request.user.username} replied to your comment: "
-                    f"{text[:180]}"
+                message=messages["notification_reply_to_comment"].format(
+                    username=request.user.username,
+                    text=text[:180],
                 ),
                 notification_type=Notification.NotificationType.COMMENT_REPLY
             )
@@ -1254,16 +1169,16 @@ def comments(request, video_id):
                 sender=request.user,
                 video=video,
                 comment=comment,
-                message=(
-                    f"{request.user.username} replied to a comment "
-                    f"on your video: {text[:180]}"
+                message=messages["notification_reply_on_video"].format(
+                    username=request.user.username,
+                    text=text[:180],
                 ),
                 notification_type=Notification.NotificationType.COMMENT_REPLY
             )
 
         return Response(
             {
-                "message": "Comment added successfully",
+                "message": messages["comment_added"],
                 "comment": {
                     "id": comment.id,
                     "user_id": comment.user.id,
@@ -1288,17 +1203,18 @@ def comments(request, video_id):
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
 def edit_comment_api(request, comment_id):
+    messages = get_messages(request)
     comment = get_object_or_404(Comment, id=comment_id)
 
     if comment.is_removed:
         return Response(
-            {"error": "This comment was removed for violating community guidelines."},
+            {"error": messages["comment_removed"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if comment.user_id != request.user.id:
         return Response(
-            {"error": "You can only edit your own comments."},
+            {"error": messages["edit_own_comment_only"]},
             status=status.HTTP_403_FORBIDDEN
         )
 
@@ -1306,13 +1222,13 @@ def edit_comment_api(request, comment_id):
 
     if not text:
         return Response(
-            {"error": "Comment text is required."},
+            {"error": messages["comment_text_required"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if len(text) > 1000:
         return Response(
-            {"error": "Comment must be 1000 characters or less."},
+            {"error": messages["comment_too_long"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -1320,7 +1236,7 @@ def edit_comment_api(request, comment_id):
     comment.save(update_fields=["text"])
 
     return Response({
-        "message": "Comment updated successfully.",
+        "message": messages["comment_updated"],
         "comment": {
             "id": comment.id,
             "text": comment.text,
@@ -1331,29 +1247,31 @@ def edit_comment_api(request, comment_id):
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
 def delete_comment_api(request, comment_id):
+    messages = get_messages(request)
     comment = get_object_or_404(Comment, id=comment_id)
 
     if comment.user_id != request.user.id:
         return Response(
-            {"error": "You can only delete your own comments."},
+            {"error": messages["edit_own_comment_only"]},
             status=status.HTTP_403_FORBIDDEN
         )
 
     comment.delete()
 
     return Response(
-        {"message": "Comment deleted successfully."},
+        {"message": messages["comment_deleted"]},
         status=status.HTTP_200_OK
     )
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def like_comment_api(request, comment_id):
+    messages = get_messages(request)
     comment = get_object_or_404(Comment, id=comment_id)
 
     if comment.is_removed:
         return Response(
-            {"error": "This comment was removed for violating community guidelines."},
+            {"error": messages["comment_removed"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -1392,7 +1310,9 @@ def like_comment_api(request, comment_id):
                 recipient=comment.user,
                 sender=request.user,
                 notification_type=Notification.NotificationType.COMMENT_LIKE,
-                message=f"{request.user.username} liked your comment.",
+                message=messages["notification_comment_liked"].format(
+                    username=request.user.username,
+                ),
                 video=comment.video,
                 comment=comment
             )
@@ -1407,11 +1327,12 @@ def like_comment_api(request, comment_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def dislike_comment_api(request, comment_id):
+    messages = get_messages(request)
     comment = get_object_or_404(Comment, id=comment_id)
 
     if comment.is_removed:
         return Response(
-            {"error": "This comment was removed for violating community guidelines."},
+            {"error": messages["comment_removed"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -1450,11 +1371,12 @@ def dislike_comment_api(request, comment_id):
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
 def unlike_comment_api(request, comment_id):
+    messages = get_messages(request)
     comment = get_object_or_404(Comment, id=comment_id)
 
     if comment.is_removed:
         return Response(
-            {"error": "This comment was removed for violating community guidelines."},
+            {"error": messages["comment_removed"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -1476,18 +1398,19 @@ def unlike_comment_api(request, comment_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def report_comment_api(request, comment_id):
+    messages = get_messages(request)
     comment = get_object_or_404(Comment, id=comment_id)
 
     if comment.is_removed:
         return Response(
-            {"error": "This comment was removed for violating community guidelines."},
+            {"error": messages["comment_removed"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     # Users cannot report their own comments.
     if comment.user_id == request.user.id:
         return Response(
-            {"error": "You cannot report your own comment."},
+            {"error": messages["report_own_comment"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -1500,13 +1423,13 @@ def report_comment_api(request, comment_id):
 
     if reason not in valid_reasons:
         return Response(
-            {"error": "Please select a valid report reason."},
+            {"error": messages["invalid_report_reason"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if len(details) > 500:
         return Response(
-            {"error": "Details must be 500 characters or less."},
+            {"error": messages["report_details_too_long"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -1521,13 +1444,13 @@ def report_comment_api(request, comment_id):
 
     if not created:
         return Response(
-            {"error": "You have already reported this comment."},
+            {"error": messages["comment_already_reported"]},
             status=status.HTTP_409_CONFLICT
         )
 
     return Response(
         {
-            "message": "Comment reported successfully.",
+            "message": messages["comment_reported"],
             "report_id": report.id,
             "status": report.status,
         },
@@ -1926,14 +1849,14 @@ def edit_profile_api(request):
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
 def change_username_api(request):
-
+    messages = get_messages(request)
     new_username = request.data.get(
         "username", ""
     ).strip()
 
     if not new_username:
         return Response(
-            {"error": "Username cannot be empty."},
+            {"error": messages["username_empty"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -1941,7 +1864,7 @@ def change_username_api(request):
         username=new_username
     ).exclude(id=request.user.id).exists():
         return Response(
-            {"error": "Username already exists."},
+            {"error": messages["username_exists"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -1949,14 +1872,14 @@ def change_username_api(request):
     request.user.save(update_fields=["username"])
 
     return Response({
-        "message": "Username updated successfully.",
+        "message": messages["username_updated"],
         "username": request.user.username
     })
 
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
 def change_password_api(request):
-
+    messages = get_messages(request)
     current_password = request.data.get(
         "current_password", ""
     )
@@ -1973,25 +1896,25 @@ def change_password_api(request):
 
     if not current_password or not new_password or not password_confirm:
         return Response(
-            {"error": "All fields are required."},
+            {"error": messages["all_fields_required"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if not user.check_password(current_password):
         return Response(
-            {"error": "Current password is incorrect."},
+            {"error": messages["current_password_incorrect"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if new_password != password_confirm:
         return Response(
-            {"error": "New passwords do not match."},
+            {"error": messages["new_passwords_mismatch"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if len(new_password) < 8:
         return Response(
-            {"error": "Password must be at least 8 characters."},
+            {"error": messages["password_too_short"]},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -1999,7 +1922,7 @@ def change_password_api(request):
     user.save(update_fields=["password"])
 
     return Response({
-        "message": "Password updated successfully. Please log in again."
+        "message": messages["password_updated"]
     })
 
 @login_required
@@ -2603,20 +2526,20 @@ def delete_notification(request, notification_id):
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
 def delete_account_api(request):
+    messages = get_messages(request)
     user = request.user
-
     # Require password confirmation before irreversible deletion.
     password = request.data.get("password", "")
 
     if not password:
         return Response(
-            {"error": "Password is required to delete your account."},
+            {"error": messages["password_required_delete"]},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
     if not user.check_password(password):
         return Response(
-            {"error": "Incorrect password."},
+            {"error": messages["incorrect_password"]},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -2655,6 +2578,6 @@ def delete_account_api(request):
         transaction.on_commit(delete_media_files)
 
     return Response(
-        {"message": "Your account has been deleted successfully."},
+        {"message": messages["account_deleted"]},
         status=status.HTTP_200_OK,
     )
