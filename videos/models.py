@@ -43,9 +43,90 @@ class Video(models.Model):
         default=0
     )
 
+    duration = models.FloatField(default=0)
+
     created_at=models.DateTimeField(
         auto_now_add=True
     )
+
+class VideoQuality(models.Model):
+
+    QUALITY_CHOICES = [
+        (480, "480p"),
+        (720, "720p"),
+        (1080, "1080p"),
+    ]
+
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.CASCADE,
+        related_name="qualities",
+    )
+
+    resolution = models.PositiveIntegerField(
+        choices=QUALITY_CHOICES,
+    )
+
+    video_file = models.FileField(
+        upload_to="video_qualities/",
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["video", "resolution"],
+                name="unique_video_quality",
+            ),
+        ]
+        ordering = ["resolution"]
+
+    def __str__(self):
+        return f"{self.video.title} - {self.resolution}p"
+
+class VideoSubtitle(models.Model):
+
+    LANGUAGE_CHOICES = [
+        ("fa", "Persian"),
+        ("en", "English"),
+    ]
+
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.CASCADE,
+        related_name="subtitles",
+    )
+
+    language = models.CharField(
+        max_length=2,
+        choices=LANGUAGE_CHOICES,
+    )
+
+    label = models.CharField(
+        max_length=50,
+    )
+
+    subtitle_file = models.FileField(
+        upload_to="subtitles/",
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["video", "language"],
+                name="unique_subtitle_language_per_video",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.video.title} - {self.label}"
 
 class Subscription(models.Model):
 
@@ -453,4 +534,3 @@ class VideoView(models.Model):
     created_at = models.DateTimeField(
         auto_now_add=True
     )
-

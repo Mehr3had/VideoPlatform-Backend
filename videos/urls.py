@@ -3,13 +3,10 @@ from . import views
 
 urlpatterns=[
     path("",views.home,name="home"),
-    path("dashboard/",views.dashboard,name="dashboard"),
     path("api/dashboard/",views.dashboard_api,name="dashboard_api"),
-    path("profile/edit/",views.edit_profile,name="edit_profile"),
     path("api/profile/edit/", views.edit_profile_api, name="edit_profile_api"),
     path("api/account/username/",views.change_username_api,name="change_username_api"),
     path("api/account/password/", views.change_password_api,name="change_password_api"),
-    path("upload/",views.upload_video,name="upload_video"),
     path("api/videos/upload/",views.upload_video_api,name="upload_video_api"),
     path("api/categories/",views.category_list_api,name="category_list_api"),
     path("api/register/",views.register_api,name="register_api"),
@@ -38,9 +35,7 @@ urlpatterns=[
     path("api/comments/<int:comment_id>/edit/",views.edit_comment_api,name="edit_comment_api"),
     path("api/comments/<int:comment_id>/delete/",views.delete_comment_api,name="delete_comment_api"),
     path("api/comments/<int:comment_id>/report/",views.report_comment_api,name="report_comment_api"),
-    path("<int:video_id>/edit/",views.edit_video,name="edit_video"),
     path("api/videos/<int:video_id>/edit/",views.edit_video_api,name="edit_video_api"),
-    path("<int:video_id>/delete/",views.delete_video,name="delete_video"),
     path("api/videos/<int:video_id>/delete/",views.delete_video_api,name="delete_video_api"),
     path("user/<int:user_id>/",views.user_profile,name="user_profile"),
     path("user/<int:user_id>/subscribe/",views.toggle_subscription,name="toggle_subscription"),

@@ -28,6 +28,8 @@ from django.core.files.storage import default_storage
 from .translations import MESSAGES, get_messages
 import os
 import logging
+import subprocess
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +242,28 @@ def video_detail_api(request, video_id):
         reaction_type=VideoReaction.DISLIKE
     ).count()
 
+    subtitles = [
+        {
+            "language": subtitle.language,
+            "label": subtitle.label,
+            "src": request.build_absolute_uri(
+                subtitle.subtitle_file.url
+            ),
+        }
+        for subtitle in video.subtitles.all()
+    ]
+
+    qualities = [
+        {
+            "resolution": quality.resolution,
+            "label": f"{quality.resolution}p",
+            "src": request.build_absolute_uri(
+                quality.video_file.url
+            ),
+        }
+        for quality in video.qualities.all()
+    ]
+
     return Response({
         "id": video.id,
         "title": video.title,
@@ -254,6 +278,8 @@ def video_detail_api(request, video_id):
         "video_file": request.build_absolute_uri(
             video.video_file.url
         ),
+        "qualities": qualities,
+        "subtitles": subtitles,
         "category_id": (
             video.category.id
             if video.category
@@ -267,10 +293,32 @@ def video_detail_api(request, video_id):
         "dislikes_count": dislikes_count,
     })
 
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def react_to_video(request, video_id):
     video = get_object_or_404(Video, id=video_id)
+
+    if request.method == "GET":
+        reaction = VideoReaction.objects.filter(
+            user=request.user,
+            video=video
+        ).first()
+
+        likes_count = VideoReaction.objects.filter(
+            video=video,
+            reaction_type=VideoReaction.LIKE
+        ).count()
+
+        dislikes_count = VideoReaction.objects.filter(
+            video=video,
+            reaction_type=VideoReaction.DISLIKE
+        ).count()
+
+        return Response({
+            "reaction": reaction.reaction_type if reaction else None,
+            "likes_count": likes_count,
+            "dislikes_count": dislikes_count,
+        })
 
     reaction_type = request.data.get(
         "reaction", ""
@@ -833,6 +881,7 @@ def video_list_api(request):
             "video_file": request.build_absolute_uri(video.video_file.url),
             "views_count": video.views_count,
             "username": video.user.username,
+            "duration": video.duration,
             "created_at": video.created_at,
             "category_id": video.category.id if video.category else None,
             "category_name": video.category.name if video.category else None,
@@ -856,6 +905,7 @@ def trending_videos_api(request):
             ),
             "views_count": video.views_count,
             "username": video.user.username,
+            "duration": video.duration,
             "created_at": video.created_at,
         })
 
@@ -1648,21 +1698,6 @@ def remove_reported_comment_api(request, report_id):
         "reviewed_at": report.reviewed_at.isoformat(),
     })
 
-@login_required
-def dashboard(request):
-
-    videos=Video.objects.filter(
-        user=request.user
-    ).order_by("-created_at")
-
-    return render(
-        request,
-        "videos/dashboard.html",
-        {
-            "videos":videos
-        }
-    )
-
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def dashboard_api(request):
@@ -1779,39 +1814,6 @@ def user_profile(request, user_id):
             "videos":videos,
             "subscribers_count":subscribers_count,
             "is_subscribed":is_subscribed
-        }
-    )
-
-@login_required
-def edit_profile(request):
-
-    profile, created=Profile.objects.get_or_create(
-        user=request.user
-    )
-
-    if request.method=="POST":
-
-        profile_image=request.FILES.get("profile_image")
-
-        bio=request.POST.get("bio")
-
-        if profile_image:
-            profile.profile_image=profile_image
-
-        profile.bio=bio
-
-        profile.save()
-
-        return redirect(
-            "user_profile",
-            user_id=request.user.id
-        )
-
-    return render(
-        request,
-        "videos/edit_profile.html",
-        {
-            "profile": profile
         }
     )
 
@@ -1962,76 +1964,6 @@ def toggle_subscription(request,user_id):
         user_id=user_id
     )
 
-@login_required
-def upload_video(request):
-
-    if request.method=="POST":
-
-        title=request.POST.get("title")
-        description=request.POST.get("description")
-        video_file=request.FILES.get("video_file")
-        thumbnail=request.FILES.get("thumbnail")
-
-        if not title:
-            return render(
-                request,
-                "videos/upload_video.html",
-                {
-                    "error":"Title is required."
-                }
-            )
-
-        if len(description)>5000:
-
-            return render(
-                request,
-                "videos/edit_video.html",
-                {
-                    "error":"Description must be 5000 characters or less."
-                }
-            )
-
-        error=validate_video_file(video_file)
-
-        if error:
-
-            return render(
-                request,
-                "videos/upload_video.html",
-                {
-                    "error":error
-                }
-            )
-
-        error=validate_thumbnail_file(thumbnail)
-
-        if error:
-
-            return render(
-                request,
-                "videos/upload_video.html",
-                {
-                    "error":error
-                }
-            )
-
-        video=Video.objects.create(
-            user=request.user,
-            title=title,
-            description=description,
-            video_file=video_file,
-            thumbnail=thumbnail
-        )
-
-        notify_subscribers_new_video(video)
-
-        return redirect("home")
-
-    return render(
-        request,
-        "videos/upload_video.html"
-    )
-
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def upload_video_api(request):
@@ -2071,6 +2003,9 @@ def upload_video_api(request):
         user=request.user
     )
 
+    video.duration = get_video_duration(video.video_file.path)
+    video.save(update_fields=["duration"])
+
     notify_subscribers_new_video(video)
 
     return Response(
@@ -2097,95 +2032,6 @@ def category_list_api(request):
         })
 
     return Response(data)
-
-@login_required
-def edit_video(request,video_id):
-
-    video=get_object_or_404(
-        Video,
-        id=video_id,
-        user=request.user
-    )
-
-    if request.method=="POST":
-
-        title=request.POST.get("title","").strip()
-        description=request.POST.get("description")
-        video_file=request.FILES.get("video_file")
-        thumbnail=request.FILES.get("thumbnail")
-
-        if not title:
-
-            return render(
-                request,
-                "videos/edit_video.html",
-                {
-                    "video":video,
-                    "error":"Title is required."
-                }
-            )
-
-        if len(description)>5000:
-
-            return render(
-                request,
-                "videos/edit_video.html",
-                {
-                    "video":video,
-                    "error":"Description must be 5000 characters or less."
-                }
-            )
-
-        video.title=title
-        video.description=description
-
-        if video_file:
-
-            error=validate_video_file(video_file)
-
-            if error:
-
-                return render(
-                    request,
-                    "videos/edit_video.html",
-                    {
-                        "video":video,
-                        "error":error
-                    }
-                )
-
-        if thumbnail:
-
-            error=validate_thumbnail_file(thumbnail)
-
-            if error:
-
-                return render(
-                    request,
-                    "videos/edit_video.html",
-                    {
-                        "video":video,
-                        "error":error
-                    }
-                )
-
-        if video_file:
-            video.video_file=video_file
-
-        if thumbnail:
-            video.thumbnail=thumbnail
-
-        video.save()
-
-        return redirect("dashboard")
-
-    return render(
-        request,
-        "videos/edit_video.html",
-        {
-            "video":video
-        }
-    )
 
 @api_view(["PUT", "PATCH"])
 @permission_classes([IsAuthenticated])
@@ -2234,29 +2080,6 @@ def edit_video_api(request, video_id):
     return Response({
         "message": "Video updated successfully."
     })
-
-@login_required
-def delete_video(request,video_id):
-
-    video=get_object_or_404(
-        Video,
-        id=video_id,
-        user=request.user
-    )
-
-    if request.method=="POST":
-
-        video.delete()
-
-        return redirect("dashboard")
-
-    return render(
-        request,
-        "videos/delete_video.html",
-        {
-            "video":video
-        }
-    )
 
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
@@ -2581,3 +2404,35 @@ def delete_account_api(request):
         {"message": messages["account_deleted"]},
         status=status.HTTP_200_OK,
     )
+
+def get_video_duration(video_path):
+    ffprobe_path = shutil.which("ffprobe")
+
+    if not ffprobe_path:
+        logger.warning("FFprobe was not found on the system PATH.")
+        return 0
+
+    try:
+        result = subprocess.run(
+            [
+                ffprobe_path,
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                video_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+
+        return max(0, float(result.stdout.strip()))
+
+    except (subprocess.SubprocessError, ValueError, OSError) as error:
+        logger.warning(
+            "Could not extract video duration from %s: %s",
+            video_path,
+            error,
+        )
+        return 0

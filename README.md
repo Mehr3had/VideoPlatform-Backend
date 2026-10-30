@@ -16,11 +16,13 @@ A Django REST API for a video-sharing platform inspired by YouTube and Aparat. T
 - SQLite
 - Pillow
 - django-cors-headers
+- FFmpeg / FFprobe
 - Next.js (frontend)
 
 ## Features
 
 ### Authentication and Account Management
+
 - User registration and JWT authentication
 - User profiles and profile editing
 - Username and password management
@@ -28,22 +30,36 @@ A Django REST API for a video-sharing platform inspired by YouTube and Aparat. T
 - Account deletion
 
 ### Video Management
+
 - Upload, edit, and delete videos
 - Video thumbnails and view counts
+- Video duration extraction using FFprobe
 - Trending videos
 - Video reactions (likes and dislikes)
 - Category-based filtering
 - Search by video title and description
 - Paginated video listings
 
+### Video Playback Support
+
+- Multiple video quality support (480p, 720p, and 1080p)
+- Video quality metadata and file management
+- Persian and English subtitle support
+- Subtitle and quality information included in video detail responses
+
+**Note:** Video quality generation is currently implemented as a separate processing utility and is not automatically triggered during video uploads.
+
 ### Comments and Moderation
+
 - Create comments and replies
 - Like and dislike comments
 - Edit and delete comments
 - Report inappropriate comments
 - Administrative report management
+- Comment moderation through Django Admin
 
 ### Subscriptions and Notifications
+
 - Subscribe to and unsubscribe from channels
 - Notifications for new videos from subscribed channels
 - Notifications for comment replies and interactions
@@ -54,6 +70,7 @@ A Django REST API for a video-sharing platform inspired by YouTube and Aparat. T
 - Subscriber milestone notifications
 
 ### User Dashboard
+
 - User dashboard and account settings
 - Profile and content management
 - Integration with the Next.js frontend
@@ -64,6 +81,7 @@ A Django REST API for a video-sharing platform inspired by YouTube and Aparat. T
 
 - Python compatible with the project's installed Django version
 - Git
+- FFmpeg and FFprobe available in the system PATH
 - Node.js and npm if you also want to run the frontend
 
 ### 1. Clone the repository
@@ -139,6 +157,7 @@ The following table lists selected API endpoints. The application-specific endpo
 |---|---|
 | `/videos/api/register/` | User registration |
 | `/videos/api/login/` | User login |
+| `/videos/api/refresh/` | Refresh JWT access token |
 | `/videos/api/me/` | Current user information |
 | `/videos/api/account/username/` | Change username |
 | `/videos/api/account/password/` | Change password |
@@ -148,10 +167,12 @@ The following table lists selected API endpoints. The application-specific endpo
 | `/videos/api/videos/` | List and search videos |
 | `/videos/api/videos/upload/` | Upload a video |
 | `/videos/api/videos/trending/` | Retrieve trending videos |
-| `/videos/api/videos/<video_id>/` | Retrieve video details |
+| `/videos/api/videos/<video_id>/` | Retrieve video details, qualities, and subtitles |
 | `/videos/api/categories/` | Retrieve categories |
 | `/videos/api/users/<user_id>/` | Retrieve a user profile |
+| `/videos/api/users/<user_id>/videos/` | Retrieve videos uploaded by a user |
 | `/videos/api/users/<user_id>/subscribe/` | Manage a channel subscription |
+| `/videos/<video_id>/react/` | Retrieve or update a video reaction |
 | `/videos/<video_id>/comments/` | Retrieve and create comments |
 | `/videos/api/comments/<comment_id>/like/` | Like a comment |
 | `/videos/api/comments/<comment_id>/report/` | Report a comment |
@@ -183,6 +204,20 @@ Query parameters:
 
 Pagination defaults to **6 videos per page**, with a configurable maximum of **20 videos per page**.
 
+## Video Processing
+
+The backend uses FFprobe to extract video duration during upload.
+
+A separate video-processing utility uses FFmpeg to generate different video resolutions:
+
+- 480p
+- 720p
+- 1080p
+
+The utility skips resolutions higher than the source video's resolution. Generated video files and subtitle files are stored in the media directory and are excluded from version control.
+
+Video quality generation currently requires invoking the processing utility separately.
+
 ## Frontend Integration
 
 The frontend is built with Next.js and runs locally at `http://localhost:3000`.
@@ -199,9 +234,11 @@ Ensure that Django's CORS configuration allows requests from the frontend origin
 
 ## Media Files and Local Data
 
-Uploaded videos, thumbnails, profile images, and the local SQLite database are excluded from version control.
+Uploaded videos, thumbnails, profile images, subtitles, generated video qualities, and the local SQLite database are excluded from version control.
 
 A fresh clone will not include locally uploaded media or sample content created during development. After applying migrations, create categories and upload your own videos and thumbnails through Django Admin or the available API endpoints.
+
+Subtitles and video quality records can be managed through Django Admin.
 
 ## Security Notes
 

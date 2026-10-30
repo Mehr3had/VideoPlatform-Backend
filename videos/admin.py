@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Video, Comment, Category, Profile, CommentReport
+from .models import Video, Comment, Category, Profile, CommentReport, VideoSubtitle, VideoQuality
 from django.utils import timezone
 
 admin.site.register(Video)
@@ -104,3 +104,30 @@ class CommentReportAdmin(admin.ModelAdmin):
             request,
             f"{count} comment(s) marked as removed. Replies and reports were preserved."
         )
+
+@admin.register(VideoSubtitle)
+class VideoSubtitleAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "video",
+        "language",
+        "label",
+        "created_at",
+    )
+
+    list_filter = ("language", "created_at")
+    search_fields = ("video__title", "label")
+    list_select_related = ("video",)
+
+@admin.register(VideoQuality)
+class VideoQualityAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "video",
+        "resolution",
+        "created_at",
+    )
+
+    list_filter = ("resolution", "created_at")
+    search_fields = ("video__title",)
+    list_select_related = ("video",)
