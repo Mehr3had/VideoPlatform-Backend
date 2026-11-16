@@ -1,12 +1,14 @@
 from django.shortcuts import render,get_object_or_404,redirect # type: ignore
 from .models import CommentDislike, CommentReport, Video,VideoReaction,Category,Subscription,Profile,VideoView
-from .models import Comment, CommentLike, Notification, NotificationPreference,SubscriberMilestone
+from .models import Comment, CommentLike, Notification, NotificationPreference,SubscriberMilestone,LiveStream,LiveChatMessage,LiveStreamReaction,LiveStreamReport,LiveChatMessageReport
 from django.contrib.auth.decorators import login_required # type: ignore
 from django.contrib.auth.models import User # type: ignore
 from rest_framework.response import Response # type: ignore
 from rest_framework import status # type: ignore
 from django.contrib.auth import authenticate,login as auth_login # type: ignore
-from django.contrib.auth import logout # type: ignore
+from django.contrib.auth import logout
+from django.middleware.csrf import get_token
+from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken # type: ignore
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken # type: ignore
 from rest_framework.permissions import IsAuthenticated,IsAdminUser,AllowAny # type: ignore
@@ -23,13 +25,20 @@ from django.conf import settings  # type: ignore
 from django.contrib.auth.tokens import default_token_generator # type: ignore
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode # type: ignore
 from django.utils.encoding import force_bytes # type: ignore
+from django.utils.dateparse import parse_datetime
 from django.db import transaction # type: ignore
 from django.core.files.storage import default_storage
 from .translations import MESSAGES, get_messages
+from .services.hls import generate_hls, HLSGenerationError
 import os
 import logging
 import subprocess
 import shutil
+import hashlib
+import secrets
+import re
+from PIL import Image
+from django.core.files import File
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +184,54 @@ def validate_thumbnail_file(thumbnail):
 
     return None
 
+def validate_live_thumbnail_file(thumbnail):
+    if not thumbnail:
+        return None
+
+    allowed_formats = {
+        ".jpg": "JPEG",
+        ".jpeg": "JPEG",
+        ".png": "PNG",
+        ".webp": "WEBP",
+    }
+
+    extension = os.path.splitext(thumbnail.name)[1].lower()
+
+    if extension not in allowed_formats:
+        return "Only JPG, PNG, and WebP images are allowed."
+
+    max_size = 5 * 1024 * 1024
+
+    if thumbnail.size > max_size:
+        return "Thumbnail must be smaller than 5 MB."
+
+    try:
+        thumbnail.seek(0)
+
+        with Image.open(thumbnail) as image:
+            actual_format = image.format
+            width, height = image.size
+
+            if actual_format != allowed_formats[extension]:
+                return "Image content does not match its file extension."
+
+            if (
+                width > 8192
+                or height > 8192
+                or width * height > 40_000_000
+            ):
+                return "Thumbnail dimensions are too large."
+
+            image.verify()
+
+        thumbnail.seek(0)
+
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+        thumbnail.seek(0)
+        return "The selected thumbnail is not a valid image."
+
+    return None
+
 def video_detail(request,video_id):
 
     video=get_object_or_404(
@@ -264,7 +321,20 @@ def video_detail_api(request, video_id):
         for quality in video.qualities.all()
     ]
 
-    return Response({
+    hls_playlist_path = (
+        settings.MEDIA_ROOT / "hls" / str(video.id) / "index.m3u8"
+    )
+
+    if hls_playlist_path.is_file():
+        hls_version = hls_playlist_path.stat().st_mtime_ns
+
+        hls_url = request.build_absolute_uri(
+            f"{settings.MEDIA_URL}hls/{video.id}/index.m3u8?v={hls_version}"
+        )
+    else:
+        hls_url = None
+
+    response = Response({
         "id": video.id,
         "title": video.title,
         "description": video.description,
@@ -278,6 +348,7 @@ def video_detail_api(request, video_id):
         "video_file": request.build_absolute_uri(
             video.video_file.url
         ),
+        "hls_url": hls_url,
         "qualities": qualities,
         "subtitles": subtitles,
         "category_id": (
@@ -292,6 +363,9 @@ def video_detail_api(request, video_id):
         "likes_count": likes_count,
         "dislikes_count": dislikes_count,
     })
+
+    response["Cache-Control"] = "no-store"
+    return response
 
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
@@ -608,12 +682,23 @@ def password_reset_confirm_api(request):
         status=status.HTTP_200_OK
     )
 
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def csrf_token_api(request):
+    csrf_token = get_token(request._request)
+
+    return Response(
+        {"csrfToken": csrf_token},
+        status=status.HTTP_200_OK,
+    )
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def login_api(request):
     messages = get_messages(request)
     username = request.data.get("username", "").strip()
     password = request.data.get("password", "")
+    SessionAuthentication().enforce_csrf(request)
 
     if not username or not password:
         return Response(
@@ -659,6 +744,7 @@ def login_api(request):
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def refresh_token_api(request):
+    SessionAuthentication().enforce_csrf(request)
     refresh_token = request.COOKIES.get("refresh_token")
 
     if not refresh_token:
@@ -703,6 +789,31 @@ def refresh_token_api(request):
             samesite="Lax",
             path="/videos/",
         )
+
+    return response
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def logout_api(request):
+    SessionAuthentication().enforce_csrf(request)
+    refresh_token = request.COOKIES.get("refresh_token")
+
+    if refresh_token:
+        try:
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+        except (TokenError, InvalidToken):
+            pass
+
+    response = Response(
+        {"message": "Logged out successfully."},
+        status=status.HTTP_200_OK,
+    )
+
+    response.delete_cookie(
+        key="refresh_token",
+        path="/videos/",
+    )
 
     return response
 
@@ -1065,6 +1176,39 @@ def home(request):
         }
     )
 
+def validate_spoiler_ranges(ranges, text):
+    if not isinstance(ranges, list):
+        raise ValueError("Spoiler ranges must be a list.")
+
+    validated_ranges = []
+
+    for item in ranges:
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError("Each spoiler range must contain start and end.")
+
+        start, end = item
+
+        if type(start) is not int or type(end) is not int:
+            raise ValueError("Spoiler positions must be integers.")
+
+        text_length = len(text.encode("utf-16-le")) // 2
+
+        if start < 0 or end <= start or end > text_length:
+            raise ValueError("Invalid spoiler range.")
+
+        validated_ranges.append([start, end])
+
+    validated_ranges.sort(key=lambda item: item[0])
+
+    for index in range(1, len(validated_ranges)):
+        previous_end = validated_ranges[index - 1][1]
+        current_start = validated_ranges[index][0]
+
+        if current_start < previous_end:
+            raise ValueError("Spoiler ranges cannot overlap.")
+
+    return validated_ranges
+
 @api_view(["GET", "POST"])
 def comments(request, video_id):
     messages = get_messages(request)
@@ -1098,6 +1242,8 @@ def comments(request, video_id):
                     else None
                 ),
                 "text": comment.text,
+                "is_question": comment.is_question,
+                "spoiler_ranges": comment.spoiler_ranges,
                 "is_removed": comment.is_removed,
                 "parent_comment_id": comment.parent_id,
                 "created_at": comment.created_at.isoformat(),
@@ -1147,6 +1293,25 @@ def comments(request, video_id):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        is_question = request.data.get("is_question", False)
+
+        if not isinstance(is_question, bool):
+            return Response(
+                {"error": "is_question must be a boolean."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            spoiler_ranges = validate_spoiler_ranges(
+                request.data.get("spoiler_ranges", []),
+                text
+            )
+        except ValueError as error:
+            return Response(
+                {"error": str(error)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         parent = None
         parent_id = request.data.get("parent_comment_id")
 
@@ -1177,7 +1342,9 @@ def comments(request, video_id):
             user=request.user,
             video=video,
             text=text,
-            parent=parent
+            parent=parent,
+            is_question=is_question,
+            spoiler_ranges=spoiler_ranges
         )
 
         # Notify the video owner about a new top-level comment.
@@ -1242,6 +1409,8 @@ def comments(request, video_id):
                         else None
                     ),
                     "text": comment.text,
+                    "is_question": comment.is_question,
+                    "spoiler_ranges": comment.spoiler_ranges,
                     "is_removed": comment.is_removed,
                     "parent_comment_id": comment.parent_id,
                     "created_at": comment.created_at.isoformat()
@@ -1282,8 +1451,44 @@ def edit_comment_api(request, comment_id):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+    is_question = request.data.get(
+        "is_question",
+        comment.is_question
+    )
+
+    if not isinstance(is_question, bool):
+        return Response(
+            {"error": "is_question must be a boolean."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if "spoiler_ranges" in request.data:
+        try:
+            spoiler_ranges = validate_spoiler_ranges(
+                request.data["spoiler_ranges"],
+                text
+            )
+        except ValueError as error:
+            return Response(
+                {"error": str(error)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    elif text != comment.text:
+        # Old spoiler positions may no longer match the edited text.
+        spoiler_ranges = []
+    else:
+        spoiler_ranges = comment.spoiler_ranges
+
     comment.text = text
-    comment.save(update_fields=["text"])
+    comment.is_question = is_question
+    comment.spoiler_ranges = spoiler_ranges
+    comment.save(
+        update_fields=[
+            "text",
+            "is_question",
+            "spoiler_ranges"
+        ]
+    )
 
     return Response({
         "message": messages["comment_updated"],
@@ -1291,6 +1496,8 @@ def edit_comment_api(request, comment_id):
             "id": comment.id,
             "text": comment.text,
             "parent_comment_id": comment.parent_id,
+            "is_question": comment.is_question,
+            "spoiler_ranges": comment.spoiler_ranges,
         }
     }, status=status.HTTP_200_OK)
 
@@ -1505,6 +1712,393 @@ def report_comment_api(request, comment_id):
             "status": report.status,
         },
         status=status.HTTP_201_CREATED
+    )
+
+
+
+@api_view(["GET"])
+@permission_classes([IsAdminUser])
+def admin_live_chat_reports_api(request):
+    reports = (
+        LiveChatMessageReport.objects
+        .select_related(
+            "reporter",
+            "chat_message",
+            "chat_message__user",
+            "chat_message__live_stream",
+            "chat_message__live_stream__user",
+        )
+        .order_by("-created_at", "-id")
+    )
+
+    pending_count = LiveChatMessageReport.objects.filter(
+        status=LiveChatMessageReport.Status.PENDING
+    ).count()
+
+    reviewed_count = LiveChatMessageReport.objects.filter(
+        status=LiveChatMessageReport.Status.REVIEWED
+    ).count()
+
+    dismissed_count = LiveChatMessageReport.objects.filter(
+        status=LiveChatMessageReport.Status.DISMISSED
+    ).count()
+
+    action_taken_count = LiveChatMessageReport.objects.filter(
+        status=LiveChatMessageReport.Status.ACTION_TAKEN
+    ).count()
+
+    report_status = request.query_params.get("status", "all")
+
+    allowed_statuses = [
+        choice[0] for choice in LiveChatMessageReport.Status.choices
+    ]
+
+    if report_status != "all":
+        if report_status not in allowed_statuses:
+            return Response(
+                {"error": "Invalid report status."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reports = reports.filter(status=report_status)
+
+    search = request.query_params.get("search", "").strip()
+
+    if search:
+        search_filter = (
+            Q(chat_message__live_stream__title__icontains=search)
+            | Q(chat_message__live_stream__user__username__icontains=search)
+            | Q(chat_message__user__username__icontains=search)
+            | Q(reporter__username__icontains=search)
+            | Q(chat_message__message__icontains=search)
+            | Q(reason__icontains=search)
+            | Q(details__icontains=search)
+        )
+
+        if search.isdigit():
+            search_filter |= (
+                Q(id=int(search))
+                | Q(chat_message_id=int(search))
+                | Q(chat_message__live_stream_id=int(search))
+            )
+
+        reports = reports.filter(search_filter)
+
+    ordering = request.query_params.get("ordering", "newest")
+
+    if ordering == "newest":
+        reports = reports.order_by("-created_at", "-id")
+    elif ordering == "oldest":
+        reports = reports.order_by("created_at", "id")
+    else:
+        return Response(
+            {"error": "Invalid ordering."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        page_number = int(request.query_params.get("page", 1))
+        page_size = int(request.query_params.get("page_size", 10))
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "Page and page_size must be integers."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if page_number < 1 or page_size < 1 or page_size > 100:
+        return Response(
+            {"error": "Invalid page or page_size."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    paginator = Paginator(reports, page_size)
+    page_obj = paginator.get_page(page_number)
+
+    data = [
+        {
+            "id": report.id,
+            "live_id": report.chat_message.live_stream_id,
+            "live_title": report.chat_message.live_stream.title,
+            "channel_username": report.chat_message.live_stream.user.username,
+            "message_id": report.chat_message_id,
+            "message_author": report.chat_message.user.username,
+            "message_text": report.chat_message.message,
+            "message_is_removed": report.chat_message.is_removed,
+            "reporter": report.reporter.username,
+            "reason": report.reason,
+            "reason_display": report.get_reason_display(),
+            "details": report.details,
+            "status": report.status,
+            "status_display": report.get_status_display(),
+            "created_at": report.created_at.isoformat(),
+            "reviewed_at": (
+                report.reviewed_at.isoformat()
+                if report.reviewed_at
+                else None
+            ),
+        }
+        for report in page_obj.object_list
+    ]
+
+    return Response({
+        "pending_count": pending_count,
+        "reviewed_count": reviewed_count,
+        "dismissed_count": dismissed_count,
+        "action_taken_count": action_taken_count,
+        "total_count": paginator.count,
+        "total_pages": paginator.num_pages,
+        "current_page": page_obj.number,
+        "page_size": page_size,
+        "has_next": page_obj.has_next(),
+        "has_previous": page_obj.has_previous(),
+        "reports": data,
+    })
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAdminUser])
+def update_admin_live_chat_report_api(request, report_id):
+    report = get_object_or_404(
+        LiveChatMessageReport,
+        id=report_id,
+    )
+
+    new_status = request.data.get("status")
+
+    allowed_statuses = [
+        LiveChatMessageReport.Status.REVIEWED,
+        LiveChatMessageReport.Status.DISMISSED,
+    ]
+
+    if new_status not in allowed_statuses:
+        return Response(
+            {"error": "Invalid report status."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    report.status = new_status
+    report.reviewed_at = timezone.now()
+
+    report.save(
+        update_fields=["status", "reviewed_at"]
+    )
+
+    return Response(
+        {
+            "id": report.id,
+            "status": report.status,
+            "status_display": report.get_status_display(),
+            "reviewed_at": report.reviewed_at.isoformat(),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAdminUser])
+def remove_admin_reported_live_chat_message_api(request, report_id):
+    report = get_object_or_404(
+        LiveChatMessageReport.objects.select_related("chat_message"),
+        id=report_id,
+    )
+
+    chat_message = report.chat_message
+
+    if chat_message.is_removed:
+        return Response(
+            {"error": "This chat message has already been removed."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    chat_message.is_removed = True
+    chat_message.save(update_fields=["is_removed"])
+
+    now = timezone.now()
+
+    # Mark all reports for this message as action taken.
+    LiveChatMessageReport.objects.filter(
+        chat_message=chat_message,
+    ).update(
+        status=LiveChatMessageReport.Status.ACTION_TAKEN,
+        reviewed_at=now,
+    )
+
+    return Response(
+        {
+            "message": "Reported chat message removed successfully.",
+            "message_id": chat_message.id,
+            "message_is_removed": True,
+            "status": LiveChatMessageReport.Status.ACTION_TAKEN,
+            "status_display": (
+                LiveChatMessageReport.Status.ACTION_TAKEN.label
+            ),
+            "reviewed_at": now.isoformat(),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+@api_view(["GET"])
+@permission_classes([IsAdminUser])
+def admin_live_reports_api(request):
+    reports = (
+        LiveStreamReport.objects
+        .select_related("reporter", "live_stream", "live_stream__user")
+        .order_by("-created_at", "-id")
+    )
+
+    pending_count = LiveStreamReport.objects.filter(
+        status=LiveStreamReport.Status.PENDING
+    ).count()
+
+    reviewed_count = LiveStreamReport.objects.filter(
+        status=LiveStreamReport.Status.REVIEWED
+    ).count()
+
+    dismissed_count = LiveStreamReport.objects.filter(
+        status=LiveStreamReport.Status.DISMISSED
+    ).count()
+
+    action_taken_count = LiveStreamReport.objects.filter(
+        status=LiveStreamReport.Status.ACTION_TAKEN
+    ).count()
+
+    report_status = request.query_params.get("status", "all")
+
+    allowed_statuses = [
+        choice[0] for choice in LiveStreamReport.Status.choices
+    ]
+
+    if report_status != "all":
+        if report_status not in allowed_statuses:
+            return Response(
+                {"error": "Invalid report status."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reports = reports.filter(status=report_status)
+
+    search = request.query_params.get("search", "").strip()
+
+    if search:
+        search_filter = (
+            Q(live_stream__title__icontains=search)
+            | Q(live_stream__user__username__icontains=search)
+            | Q(reporter__username__icontains=search)
+            | Q(reason__icontains=search)
+            | Q(details__icontains=search)
+        )
+
+        if search.isdigit():
+            search_filter |= (
+                Q(id=int(search))
+                | Q(live_stream_id=int(search))
+            )
+
+        reports = reports.filter(search_filter)
+
+    ordering = request.query_params.get("ordering", "newest")
+
+    if ordering == "newest":
+        reports = reports.order_by("-created_at", "-id")
+    elif ordering == "oldest":
+        reports = reports.order_by("created_at", "id")
+    else:
+        return Response(
+            {"error": "Invalid ordering."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        page_number = int(request.query_params.get("page", 1))
+        page_size = int(request.query_params.get("page_size", 10))
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "Page and page_size must be integers."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if page_number < 1 or page_size < 1 or page_size > 100:
+        return Response(
+            {"error": "Invalid page or page_size."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    paginator = Paginator(reports, page_size)
+    page_obj = paginator.get_page(page_number)
+
+    data = [
+        {
+            "id": report.id,
+            "live_id": report.live_stream_id,
+            "live_title": report.live_stream.title,
+            "channel_username": report.live_stream.user.username,
+            "reporter": report.reporter.username,
+            "reason": report.reason,
+            "reason_display": report.get_reason_display(),
+            "details": report.details,
+            "status": report.status,
+            "status_display": report.get_status_display(),
+            "created_at": report.created_at.isoformat(),
+            "reviewed_at": (
+                report.reviewed_at.isoformat()
+                if report.reviewed_at
+                else None
+            ),
+        }
+        for report in page_obj.object_list
+    ]
+
+    return Response({
+        "pending_count": pending_count,
+        "reviewed_count": reviewed_count,
+        "dismissed_count": dismissed_count,
+        "action_taken_count": action_taken_count,
+        "total_count": paginator.count,
+        "total_pages": paginator.num_pages,
+        "current_page": page_obj.number,
+        "page_size": page_size,
+        "has_next": page_obj.has_next(),
+        "has_previous": page_obj.has_previous(),
+        "reports": data,
+    })
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAdminUser])
+def update_admin_live_report_api(request, report_id):
+    report = get_object_or_404(
+        LiveStreamReport,
+        id=report_id,
+    )
+
+    new_status = request.data.get("status")
+
+    allowed_statuses = [
+        LiveStreamReport.Status.REVIEWED,
+        LiveStreamReport.Status.DISMISSED,
+    ]
+
+    if new_status not in allowed_statuses:
+        return Response(
+            {"error": "Invalid report status."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    report.status = new_status
+    report.reviewed_at = timezone.now()
+
+    report.save(
+        update_fields=["status", "reviewed_at"]
+    )
+
+    return Response(
+        {
+            "id": report.id,
+            "status": report.status,
+            "status_display": report.get_status_display(),
+            "reviewed_at": report.reviewed_at.isoformat(),
+        },
+        status=status.HTTP_200_OK,
     )
 
 @api_view(["GET"])
@@ -1831,10 +2425,25 @@ def edit_profile_api(request):
     if bio is not None:
         profile.bio = bio
 
+    old_profile_image_name = None
+
     if "profile_image" in request.FILES:
+
+        if profile.profile_image:
+            old_profile_image_name = profile.profile_image.name
+
         profile.profile_image = request.FILES["profile_image"]
 
     profile.save()
+
+    if (
+        old_profile_image_name
+        and old_profile_image_name != profile.profile_image.name
+    ):
+        transaction.on_commit(
+            lambda file_name=old_profile_image_name:
+                delete_file_safely(file_name, "profile image")
+        )
 
     return Response({
         "message": "Profile updated successfully.",
@@ -2006,6 +2615,27 @@ def upload_video_api(request):
     video.duration = get_video_duration(video.video_file.path)
     video.save(update_fields=["duration"])
 
+    # Generate HLS without re-encoding the source video.
+    try:
+        hls_playlist = generate_hls(
+            video.video_file.path,
+            settings.MEDIA_ROOT / "hls" / str(video.id),
+        )
+
+        logger.info(
+            "HLS generated successfully for video %s: %s",
+            video.id,
+            hls_playlist,
+        )
+
+    except (HLSGenerationError, OSError) as error:
+        # Keep the original video available as a fallback.
+        logger.warning(
+            "HLS generation skipped for video %s: %s",
+            video.id,
+            error,
+        )
+
     notify_subscribers_new_video(video)
 
     return Response(
@@ -2046,6 +2676,7 @@ def edit_video_api(request, video_id):
     title = request.data.get("title")
     description = request.data.get("description")
     category_id = request.data.get("category")
+    new_video_file = request.FILES.get("video_file")
 
     if title is not None:
         title = title.strip()
@@ -2056,6 +2687,16 @@ def edit_video_api(request, video_id):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    if new_video_file:
+        error = validate_video_file(new_video_file)
+
+        if error:
+            return Response(
+                {"error": error},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    if title is not None:
         video.title = title
 
     if description is not None:
@@ -2069,13 +2710,76 @@ def edit_video_api(request, video_id):
 
         video.category = category
 
-    if request.FILES.get("thumbnail"):
-        video.thumbnail = request.FILES["thumbnail"]
+    old_thumbnail_file_name = None
 
-    if request.FILES.get("video_file"):
-        video.video_file = request.FILES["video_file"]
+    new_thumbnail = request.FILES.get("thumbnail")
+
+    if new_thumbnail:
+        if video.thumbnail:
+            old_thumbnail_file_name = video.thumbnail.name
+
+        video.thumbnail = new_thumbnail
+
+    old_video_file_name = None
+
+    if new_video_file:
+        old_video_file_name = video.video_file.name
+        video.video_file = new_video_file
 
     video.save()
+
+    # Delete the previous thumbnail after successful database save.
+    if (
+        old_thumbnail_file_name
+        and old_thumbnail_file_name != video.thumbnail.name
+    ):
+        transaction.on_commit(
+            lambda file_name=old_thumbnail_file_name:
+                delete_file_safely(file_name, "thumbnail")
+        )
+
+    if new_video_file:
+        # Update the video duration.
+        video.duration = get_video_duration(video.video_file.path)
+        video.save(update_fields=["duration"])
+
+        # Generate HLS for the new source video.
+        hls_dir = settings.MEDIA_ROOT / "hls" / str(video.id)
+        try:
+            hls_playlist = generate_hls(
+                video.video_file.path,
+                hls_dir,
+            )
+
+            logger.info(
+                "HLS regenerated successfully for video %s: %s",
+                video.id,
+                hls_playlist,
+            )
+
+        except (HLSGenerationError, OSError) as error:
+            logger.warning(
+                "HLS regeneration skipped for video %s: %s",
+                video.id,
+                error,
+            )
+            # Remove stale HLS files if generation of the new source fails.
+            try:
+                if hls_dir.exists():
+                    shutil.rmtree(hls_dir)
+
+            except OSError:
+                logger.exception(
+                    "Failed to remove stale HLS files for video %s",
+                    video.id,
+                )
+
+        # Delete the previous uploaded video file.
+        if old_video_file_name and old_video_file_name != video.video_file.name:
+            transaction.on_commit(
+                lambda file_name=old_video_file_name:
+                    delete_file_safely(file_name, "video")
+            )
 
     return Response({
         "message": "Video updated successfully."
@@ -2091,7 +2795,69 @@ def delete_video_api(request, video_id):
         user=request.user
     )
 
-    video.delete()
+    hls_dir = settings.MEDIA_ROOT / "hls" / str(video.id)
+
+    # Keep the file names before deleting the database record.
+    files_to_delete = []
+
+    if video.video_file:
+        files_to_delete.append(video.video_file.name)
+
+    if video.thumbnail:
+        files_to_delete.append(video.thumbnail.name)
+
+    # Collect generated video quality files.
+    quality_files = video.qualities.exclude(
+        video_file=""
+    ).values_list(
+        "video_file",
+        flat=True,
+    )
+
+    files_to_delete.extend(quality_files)
+
+    # Collect subtitle files.
+    subtitle_files = video.subtitles.exclude(
+        subtitle_file=""
+    ).values_list(
+        "subtitle_file",
+        flat=True,
+    )
+
+    files_to_delete.extend(subtitle_files)
+
+    def delete_video_files():
+        # Delete the original video and thumbnail.
+        for file_name in files_to_delete:
+            try:
+                default_storage.delete(file_name)
+
+            except Exception:
+                logger.exception(
+                    "Failed to delete media file: %s",
+                    file_name,
+                )
+
+        # Delete HLS playlist and segments.
+        try:
+            if hls_dir.exists():
+                shutil.rmtree(hls_dir)
+
+                logger.info(
+                    "HLS files deleted for video %s",
+                    video_id,
+                )
+
+        except OSError:
+            logger.exception(
+                "Failed to delete HLS files for video %s",
+                video_id,
+            )
+
+    # Delete the database record first.
+    with transaction.atomic():
+        video.delete()
+        transaction.on_commit(delete_video_files)
 
     return Response(
         {
@@ -2367,32 +3133,85 @@ def delete_account_api(request):
         )
 
     files_to_delete = []
+    hls_dirs = []
 
-    # Collect the user's video files and thumbnails.
-    videos = Video.objects.filter(user=user).only(
-        "video_file", "thumbnail"
+    # Collect all videos and their related media.
+    videos = list(
+        Video.objects.filter(user=user).prefetch_related(
+            "qualities",
+            "subtitles",
+        )
     )
 
     for video in videos:
+
+        # Original video.
         if video.video_file:
             files_to_delete.append(video.video_file.name)
 
+        # Thumbnail.
         if video.thumbnail:
             files_to_delete.append(video.thumbnail.name)
 
-    # Collect the profile image, if one exists.
+        # Generated video qualities.
+        for quality in video.qualities.all():
+            if quality.video_file:
+                files_to_delete.append(
+                    quality.video_file.name
+                )
+
+        # Subtitles.
+        for subtitle in video.subtitles.all():
+            if subtitle.subtitle_file:
+                files_to_delete.append(
+                    subtitle.subtitle_file.name
+                )
+
+        # HLS directory.
+        hls_dirs.append(
+            settings.MEDIA_ROOT / "hls" / str(video.id)
+        )
+
+    # Profile image.
     profile = getattr(user, "profile", None)
 
     if profile and profile.profile_image:
         files_to_delete.append(profile.profile_image.name)
 
     def delete_media_files():
+
+        # Delete files stored through Django's storage system.
         for file_name in files_to_delete:
             try:
                 default_storage.delete(file_name)
+
             except Exception:
                 logger.exception(
-                    "Failed to delete media file: %s", file_name
+                    "Failed to delete media file: %s",
+                    file_name,
+                )
+
+        # Delete HLS directories.
+        for hls_dir in hls_dirs:
+            try:
+                if hls_dir.is_symlink():
+                    logger.warning(
+                        "Skipping HLS symlink: %s",
+                        hls_dir,
+                    )
+
+                elif hls_dir.is_dir():
+                    shutil.rmtree(hls_dir)
+
+                    logger.info(
+                        "HLS directory deleted: %s",
+                        hls_dir,
+                    )
+
+            except OSError:
+                logger.exception(
+                    "Failed to delete HLS directory: %s",
+                    hls_dir,
                 )
 
     # Delete the database records first. Remove media only after commit.
@@ -2436,3 +3255,1396 @@ def get_video_duration(video_path):
             error,
         )
         return 0
+
+def delete_file_safely(file_name, file_type):
+    try:
+        default_storage.delete(file_name)
+    except Exception:
+        logger.exception(
+            "Failed to delete previous %s: %s",
+            file_type,
+            file_name,
+        )
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def create_live_stream_api(request):
+
+    title = request.data.get("title", "")
+    description = request.data.get("description", "")
+
+    if not isinstance(title, str):
+        title = ""
+
+    if not isinstance(description, str):
+        description = ""
+
+    title = title.strip()
+    description = description.strip()
+    thumbnail = request.FILES.get("thumbnail")
+    thumbnail_error = validate_live_thumbnail_file(thumbnail)
+
+    if thumbnail_error:
+        return Response(
+            {"error": thumbnail_error},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not title:
+        return Response(
+            {"error": "Live stream title is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if len(title) > 200:
+        return Response(
+            {"error": "Title cannot exceed 200 characters."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if LiveStream.objects.filter(
+        user=request.user,
+        status__in=[
+            LiveStream.Status.DRAFT,
+            LiveStream.Status.LIVE,
+        ],
+    ).exists():
+        return Response(
+            {"error": "You already have an active live stream."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    # Generate a strong, one-time publishing secret.
+    stream_secret = secrets.token_urlsafe(32)
+
+    stream_key_hash = hashlib.sha256(
+        stream_secret.encode("utf-8")
+    ).hexdigest()
+
+    with transaction.atomic():
+        live_stream = LiveStream.objects.create(
+            user=request.user,
+            title=title,
+            description=description,
+            thumbnail=thumbnail,
+            stream_key_hash=stream_key_hash,
+        )
+
+    return Response(
+        {
+            "id": live_stream.id,
+            "title": live_stream.title,
+            "description": live_stream.description,
+            "thumbnail": live_stream.thumbnail.url if live_stream.thumbnail else None,
+            "status": live_stream.status,
+
+            "rtmp_server": "rtmp://127.0.0.1:1935/live",
+
+            # OBS appends this value to the RTMP server URL.
+            # The password is sent as an RTMP query parameter.
+            "obs_stream_key": (
+                f"{live_stream.id}"
+                f"?user=publisher&pass={stream_secret}"
+            ),
+
+            "hls_url": (
+                f"/live/{live_stream.id}/index.m3u8"
+            ),
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def live_stream_detail_api(request, live_id):
+
+    queryset = LiveStream.objects.select_related(
+        "user",
+        "archive_video",
+    )
+
+    # Public users can access live and ended streams.
+    # The owner can also access their own draft or failed stream.
+    if request.user.is_authenticated:
+        queryset = queryset.filter(
+            Q(
+                status__in=[
+                    LiveStream.Status.LIVE,
+                    LiveStream.Status.ENDED,
+                ]
+            )
+            | Q(user=request.user)
+        )
+    else:
+        queryset = queryset.filter(
+            status__in=[
+                LiveStream.Status.LIVE,
+                LiveStream.Status.ENDED,
+            ]
+        )
+
+    live_stream = get_object_or_404(
+        queryset,
+        pk=live_id,
+    )
+
+    archive_video = None
+
+    if live_stream.archive_video_id:
+        archive_video = {
+            "id": live_stream.archive_video.id,
+            "title": live_stream.archive_video.title,
+        }
+
+    return Response(
+        {
+            "id": live_stream.id,
+            "title": live_stream.title,
+            "description": live_stream.description,
+            "thumbnail": live_stream.thumbnail.url if live_stream.thumbnail else None,
+            "status": live_stream.status,
+
+            "owner": {
+                "id": live_stream.user_id,
+                "username": live_stream.user.username,
+            },
+
+            "started_at": (
+                live_stream.started_at.isoformat()
+                if live_stream.started_at
+                else None
+            ),
+
+            "ended_at": (
+                live_stream.ended_at.isoformat()
+                if live_stream.ended_at
+                else None
+            ),
+
+            "archive_status": live_stream.archive_status,
+            "archive_video": archive_video,
+
+            "hls_url": (
+                f"/live/{live_stream.id}/index.m3u8"
+                if live_stream.status == LiveStream.Status.LIVE
+                else None
+            ),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def active_live_streams_api(request):
+    live_streams = (
+        LiveStream.objects
+        .filter(status=LiveStream.Status.LIVE)
+        .select_related("user")
+        .order_by("-started_at", "-created_at")
+    )
+
+    data = [
+        {
+            "id": live_stream.id,
+            "title": live_stream.title,
+            "description": live_stream.description,
+            "thumbnail": (
+                request.build_absolute_uri(live_stream.thumbnail.url)
+                if live_stream.thumbnail
+                else None
+            ),
+            "owner": {
+                "id": live_stream.user_id,
+                "username": live_stream.user.username,
+            },
+            "started_at": (
+                live_stream.started_at.isoformat()
+                if live_stream.started_at
+                else None
+            ),
+        }
+        for live_stream in live_streams
+    ]
+
+    return Response(data, status=status.HTTP_200_OK)
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def live_chat_api(request, live_id):
+
+    live_stream = get_object_or_404(
+        LiveStream.objects.select_related("user"),
+        pk=live_id,
+    )
+
+    # Public access: live and ended streams.
+    # Draft and failed streams: owner only.
+    if live_stream.status not in [
+        LiveStream.Status.LIVE,
+        LiveStream.Status.ENDED,
+    ]:
+        if (
+            not request.user.is_authenticated
+            or live_stream.user_id != request.user.id
+        ):
+            return Response(
+                {"error": "Stream not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+    # Send a new message.
+    if request.method == "POST":
+
+        if not request.user.is_authenticated:
+            return Response(
+                {"error": "Authentication required."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if live_stream.status != LiveStream.Status.LIVE:
+            return Response(
+                {"error": "This live stream has ended."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        message = request.data.get("message", "")
+
+        if not isinstance(message, str):
+            return Response(
+                {"error": "Invalid message."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        message = message.strip()
+
+        if not message:
+            return Response(
+                {"error": "Message cannot be empty."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(message) > 500:
+            return Response(
+                {"error": "Message cannot exceed 500 characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        chat_message = LiveChatMessage.objects.create(
+            live_stream=live_stream,
+            user=request.user,
+            message=message,
+        )
+
+        return Response(
+            {
+                "id": chat_message.id,
+                "username": request.user.username,
+            "user_id": request.user.id,
+            "is_own": True,
+                "message": chat_message.message,
+                "created_at": chat_message.created_at.isoformat(),
+            "total_count": LiveChatMessage.objects.filter(
+                live_stream=live_stream,
+                is_removed=False,
+            ).count(),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    # Fetch messages incrementally.
+    after_value = request.query_params.get("after")
+    after_id = None
+
+    if after_value is not None:
+        try:
+            after_id = int(after_value)
+
+            if after_id < 0:
+                raise ValueError
+
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "Invalid message cursor."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    messages_query = LiveChatMessage.objects.filter(
+        live_stream=live_stream,
+        is_removed=False,
+    ).select_related("user")
+
+    if after_id is not None:
+        messages = list(
+            messages_query.filter(
+                id__gt=after_id
+            ).order_by("id")[:50]
+        )
+    else:
+        messages = list(
+            messages_query.order_by("-id")[:50]
+        )
+
+        messages.reverse()
+
+    total_count = messages_query.count()
+
+    result = [
+        {
+            "id": item.id,
+            "user_id": item.user_id,
+            "username": item.user.username,
+            "is_own": (
+                request.user.is_authenticated
+                and item.user_id == request.user.id
+            ),
+            "message": item.message,
+            "created_at": item.created_at.isoformat(),
+        }
+        for item in messages
+    ]
+
+    return Response(
+        {
+            "messages": result,
+            "total_count": total_count,
+            "next_after": (
+                messages[-1].id
+                if messages
+                else after_id
+            ),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def report_live_chat_message_api(request, live_id, message_id):
+    live_stream = get_object_or_404(
+        LiveStream.objects.filter(
+            status__in=[
+                LiveStream.Status.LIVE,
+                LiveStream.Status.ENDED,
+            ]
+        ),
+        pk=live_id,
+    )
+
+    chat_message = get_object_or_404(
+        LiveChatMessage,
+        pk=message_id,
+        live_stream=live_stream,
+    )
+
+    if chat_message.is_removed:
+        return Response(
+            {"error": "This message is no longer available."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if chat_message.user_id == request.user.id:
+        return Response(
+            {"error": "You cannot report your own message."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    reason = request.data.get("reason", "")
+    details = request.data.get("details", "")
+
+    if not isinstance(reason, str) or not isinstance(details, str):
+        return Response(
+            {"error": "Invalid report data."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    reason = reason.strip()
+    details = details.strip()
+
+    valid_reasons = [
+        choice[0] for choice in LiveChatMessageReport.Reason.choices
+    ]
+
+    if reason not in valid_reasons:
+        return Response(
+            {"error": "Invalid report reason."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if len(details) > 500:
+        return Response(
+            {"error": "Report details must be 500 characters or less."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    report, created = LiveChatMessageReport.objects.get_or_create(
+        reporter=request.user,
+        chat_message=chat_message,
+        defaults={
+            "reason": reason,
+            "details": details,
+        },
+    )
+
+    if not created:
+        return Response(
+            {"error": "You have already reported this message."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    return Response(
+        {
+            "message": "Chat message report submitted successfully.",
+            "report_id": report.id,
+            "status": report.status,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def report_live_stream_api(request, live_id):
+    live_stream = get_object_or_404(
+        LiveStream.objects.select_related("user"),
+        pk=live_id,
+    )
+
+    if live_stream.status not in [
+        LiveStream.Status.LIVE,
+        LiveStream.Status.ENDED,
+    ]:
+        return Response(
+            {"error": "This live stream is not available for reporting."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if live_stream.user_id == request.user.id:
+        return Response(
+            {"error": "You cannot report your own live stream."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    reason = request.data.get("reason", "")
+    details = request.data.get("details", "")
+
+    if not isinstance(reason, str) or not isinstance(details, str):
+        return Response(
+            {"error": "Invalid report data."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    reason = reason.strip()
+    details = details.strip()
+
+    valid_reasons = [
+        choice[0] for choice in LiveStreamReport.Reason.choices
+    ]
+
+    if reason not in valid_reasons:
+        return Response(
+            {"error": "Invalid report reason."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if len(details) > 500:
+        return Response(
+            {"error": "Report details must be 500 characters or less."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    report, created = LiveStreamReport.objects.get_or_create(
+        reporter=request.user,
+        live_stream=live_stream,
+        defaults={
+            "reason": reason,
+            "details": details,
+        },
+    )
+
+    if not created:
+        return Response(
+            {"error": "You have already reported this live stream."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    return Response(
+        {
+            "message": "Live stream report submitted successfully.",
+            "report_id": report.id,
+            "status": report.status,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+@api_view(["GET", "POST", "DELETE"])
+@permission_classes([AllowAny])
+def live_stream_reaction_api(request, live_id):
+
+    live_stream = get_object_or_404(
+        LiveStream.objects.select_related("user"),
+        pk=live_id,
+    )
+
+    # Public access for live and ended streams.
+    if live_stream.status not in [
+        LiveStream.Status.LIVE,
+        LiveStream.Status.ENDED,
+    ]:
+        if (
+            not request.user.is_authenticated
+            or live_stream.user_id != request.user.id
+        ):
+            return Response(
+                {"error": "Stream not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+    # Only authenticated users can modify reactions.
+    if request.method in ["POST", "DELETE"]:
+
+        if not request.user.is_authenticated:
+            return Response(
+                {"error": "Authentication required."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if live_stream.status != LiveStream.Status.LIVE:
+            return Response(
+                {"error": "This live stream has ended."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+    # Get the current user's reaction.
+    user_reaction = None
+
+    if request.user.is_authenticated:
+        user_reaction = LiveStreamReaction.objects.filter(
+            live_stream=live_stream,
+            user=request.user,
+        ).first()
+
+    # Remove the current user's reaction.
+    if request.method == "DELETE":
+        if user_reaction:
+            user_reaction.delete()
+
+        user_reaction = None
+
+    # Create or update a reaction.
+    elif request.method == "POST":
+
+        reaction_type = request.data.get("reaction", "")
+
+        if not isinstance(reaction_type, str):
+            reaction_type = ""
+
+        reaction_type = reaction_type.strip().lower()
+
+        if reaction_type not in [
+            LiveStreamReaction.LIKE,
+            LiveStreamReaction.DISLIKE,
+        ]:
+            return Response(
+                {"error": "Invalid reaction."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            user_reaction, created = (
+                LiveStreamReaction.objects.get_or_create(
+                    live_stream=live_stream,
+                    user=request.user,
+                    defaults={
+                        "reaction_type": reaction_type,
+                    },
+                )
+            )
+
+            if (
+                not created
+                and user_reaction.reaction_type != reaction_type
+            ):
+                user_reaction.reaction_type = reaction_type
+                user_reaction.save(
+                    update_fields=["reaction_type"]
+                )
+
+    # Count reactions.
+    likes_count = LiveStreamReaction.objects.filter(
+        live_stream=live_stream,
+        reaction_type=LiveStreamReaction.LIKE,
+    ).count()
+
+    dislikes_count = LiveStreamReaction.objects.filter(
+        live_stream=live_stream,
+        reaction_type=LiveStreamReaction.DISLIKE,
+    ).count()
+
+    return Response(
+        {
+            "likes_count": likes_count,
+            "dislikes_count": dislikes_count,
+            "user_reaction": (
+                user_reaction.reaction_type
+                if user_reaction
+                else None
+            ),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mediamtx_auth_api(request):
+
+    # Only the local MediaMTX process may use this endpoint.
+    remote_ip = request.META.get("REMOTE_ADDR", "")
+    forwarded_ip = request.META.get("HTTP_X_REAL_IP", "")
+    allowed_ips = {"127.0.0.1", "::1"}
+
+    if (
+        remote_ip not in allowed_ips
+        or (
+            forwarded_ip
+            and forwarded_ip not in allowed_ips
+        )
+    ):
+        return Response(
+            {"error": "Forbidden."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    action = request.data.get("action", "")
+    protocol = request.data.get("protocol", "")
+    path = str(request.data.get("path", "")).strip("/")
+
+    # Only accept live/<numeric-id>.
+    match = re.fullmatch(r"live/([1-9]\d*)", path)
+
+    if not match:
+        return Response(
+            {"error": "Invalid stream path."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    live_stream = LiveStream.objects.filter(
+        pk=int(match.group(1))
+    ).first()
+
+    if live_stream is None:
+        return Response(
+            {"error": "Stream not found."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    # OBS publishing authentication.
+    if action == "publish" and protocol == "rtmp":
+
+        username = request.data.get("user", "")
+        password = request.data.get("password", "")
+
+        if username != "publisher" or not password:
+            return Response(
+                {"error": "Invalid publishing credentials."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        supplied_hash = hashlib.sha256(
+            password.encode("utf-8")
+        ).hexdigest()
+
+        if not secrets.compare_digest(
+            supplied_hash,
+            live_stream.stream_key_hash,
+        ):
+            return Response(
+                {"error": "Invalid publishing credentials."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if live_stream.status not in {
+            LiveStream.Status.DRAFT,
+            LiveStream.Status.LIVE,
+        }:
+            return Response(
+                {"error": "This stream cannot be published."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Authentication only.
+        # Actual LIVE status will be set by a MediaMTX event.
+        return Response(status=status.HTTP_200_OK)
+
+    # Public HLS playback authentication.
+    if action == "read" and protocol == "hls":
+
+        if live_stream.status == LiveStream.Status.LIVE:
+            return Response(status=status.HTTP_200_OK)
+
+        return Response(
+            {"error": "Stream is not live."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    return Response(
+        {"error": "Action not allowed."},
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mediamtx_event_api(request):
+
+    remote_ip = request.META.get("REMOTE_ADDR", "")
+    forwarded_ip = request.META.get("HTTP_X_REAL_IP", "")
+
+    allowed_ips = {"127.0.0.1", "::1"}
+
+    if (
+        remote_ip not in allowed_ips
+        or (
+            forwarded_ip
+            and forwarded_ip not in allowed_ips
+        )
+    ):
+        return Response(
+            {"error": "Forbidden."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    expected_token = settings.LIVE_WEBHOOK_TOKEN or ""
+    supplied_token = request.META.get(
+        "HTTP_X_LIVE_WEBHOOK_TOKEN",
+        "",
+    )
+
+    if (
+        not expected_token
+        or not supplied_token
+        or not secrets.compare_digest(
+            expected_token,
+            supplied_token,
+        )
+    ):
+        return Response(
+            {"error": "Invalid webhook token."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    event = str(request.data.get("event", "")).strip()
+    path = str(request.data.get("path", "")).strip("/")
+    source_id = request.data.get("source_id", "")
+
+    match = re.fullmatch(r"live/([1-9]\d*)", path)
+
+    if not match:
+        return Response(
+            {"error": "Invalid stream path."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if event not in {"online", "offline"}:
+        return Response(
+            {"error": "Invalid event."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if (
+        not isinstance(source_id, str)
+        or not source_id.strip()
+        or len(source_id.strip()) > 128
+    ):
+        return Response(
+            {"error": "Invalid source ID."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    source_id = source_id.strip()
+
+    with transaction.atomic():
+
+        live_stream = (
+            LiveStream.objects
+            .select_for_update()
+            .filter(id=int(match.group(1)))
+            .first()
+        )
+
+        if live_stream is None:
+            return Response(
+                {"error": "Live stream not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if event == "online":
+
+            if live_stream.status not in {
+                LiveStream.Status.DRAFT,
+                LiveStream.Status.LIVE,
+            }:
+                return Response(
+                    {"error": "Live stream cannot become online."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            if live_stream.status == LiveStream.Status.DRAFT:
+                live_stream.started_at = timezone.now()
+
+            live_stream.status = LiveStream.Status.LIVE
+            live_stream.active_source_id = source_id
+
+            live_stream.save(
+                update_fields=[
+                    "status",
+                    "started_at",
+                    "active_source_id",
+                    "updated_at",
+                ]
+            )
+
+            return Response(
+                {
+                    "event": "online",
+                    "id": live_stream.id,
+                    "status": live_stream.status,
+                    "source_id": live_stream.active_source_id,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # Make repeated offline callbacks safe.
+        if live_stream.status == LiveStream.Status.ENDED:
+            return Response(
+                {
+                    "event": "offline",
+                    "id": live_stream.id,
+                    "status": live_stream.status,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if live_stream.status != LiveStream.Status.LIVE:
+            return Response(
+                {"error": "Live stream is not active."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # Ignore an offline event from an older publisher.
+        if live_stream.active_source_id != source_id:
+            return Response(
+                {
+                    "event": "offline",
+                    "ignored": True,
+                    "reason": "A different publisher source is active.",
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        live_stream.status = LiveStream.Status.ENDED
+        live_stream.ended_at = timezone.now()
+        live_stream.active_source_id = ""
+
+        live_stream.save(
+            update_fields=[
+                "status",
+                "ended_at",
+                "active_source_id",
+                "updated_at",
+            ]
+        )
+
+        return Response(
+            {
+                "event": "offline",
+                "id": live_stream.id,
+                "status": live_stream.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mediamtx_archive_api(request):
+
+    from pathlib import Path
+    import time
+
+    # Only allow local MediaMTX requests.
+    remote_ip = request.META.get("REMOTE_ADDR", "")
+    forwarded_ip = request.META.get("HTTP_X_REAL_IP", "")
+
+    allowed_ips = {"127.0.0.1", "::1"}
+
+    if (
+        remote_ip not in allowed_ips
+        or (
+            forwarded_ip
+            and forwarded_ip not in allowed_ips
+        )
+    ):
+        return Response(
+            {"error": "Forbidden."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Verify the private webhook token.
+    expected_token = settings.LIVE_WEBHOOK_TOKEN or ""
+    supplied_token = request.META.get(
+        "HTTP_X_LIVE_WEBHOOK_TOKEN",
+        "",
+    )
+
+    if (
+        not expected_token
+        or not supplied_token
+        or not secrets.compare_digest(
+            expected_token,
+            supplied_token,
+        )
+    ):
+        return Response(
+            {"error": "Invalid webhook token."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Accept only live/<numeric-id>.
+    stream_path = str(
+        request.data.get("path", "")
+    ).strip("/")
+
+    match = re.fullmatch(
+        r"live/([1-9]\d*)",
+        stream_path,
+    )
+
+    if not match:
+        return Response(
+            {"error": "Invalid stream path."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    stream_id = int(match.group(1))
+
+    # Lock the stream and prevent duplicate archive processing.
+    with transaction.atomic():
+
+        live_stream = (
+            LiveStream.objects
+            .select_for_update()
+            .select_related("user")
+            .filter(pk=stream_id)
+            .first()
+        )
+
+        if live_stream is None:
+            return Response(
+                {"error": "Live stream not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if (
+            live_stream.archive_video_id
+            or live_stream.archive_status
+            == LiveStream.ArchiveStatus.COMPLETED
+        ):
+            return Response(
+                {
+                    "event": "archive",
+                    "id": stream_id,
+                    "status": "completed",
+                    "video_id": live_stream.archive_video_id,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if (
+            live_stream.archive_status
+            == LiveStream.ArchiveStatus.PROCESSING
+        ):
+            return Response(
+                {
+                    "event": "archive",
+                    "id": stream_id,
+                    "status": "processing",
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        if (
+            live_stream.status != LiveStream.Status.ENDED
+            or live_stream.active_source_id
+        ):
+            return Response(
+                {"error": "Stream has not ended safely."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        live_stream.archive_status = (
+            LiveStream.ArchiveStatus.PROCESSING
+        )
+
+        live_stream.save(
+            update_fields=[
+                "archive_status",
+                "updated_at",
+            ]
+        )
+
+    video = None
+    archive_name = None
+    temporary_files = []
+
+    try:
+
+        # Build the recording directory from the trusted stream ID.
+        recording_base = (
+            Path(settings.MEDIA_ROOT)
+            / "live_recordings"
+            / "live"
+        ).resolve()
+
+        recording_dir = (
+            recording_base / str(stream_id)
+        ).resolve()
+
+        if recording_base not in recording_dir.parents:
+            raise RuntimeError(
+                "Invalid recording directory."
+            )
+
+        if not recording_dir.is_dir():
+            raise FileNotFoundError(
+                "Recording directory does not exist."
+            )
+
+        # Wait until all recording files have stable sizes.
+        deadline = time.monotonic() + 30
+        previous_snapshot = None
+        stable_checks = 0
+        recording_files = []
+
+        while time.monotonic() < deadline:
+
+            recording_files = sorted(
+                (
+                    path
+                    for path in recording_dir.glob("*.mp4")
+                    if (
+                        path.is_file()
+                        and not path.name.startswith(".archive-")
+                    )
+                ),
+                key=lambda path: path.name,
+            )
+
+            snapshot = tuple(
+                (
+                    path.name,
+                    path.stat().st_size,
+                    path.stat().st_mtime_ns,
+                )
+                for path in recording_files
+            )
+
+            if (
+                snapshot
+                and all(item[1] > 0 for item in snapshot)
+            ):
+                if snapshot == previous_snapshot:
+                    stable_checks += 1
+                else:
+                    stable_checks = 0
+
+                if stable_checks >= 2:
+                    break
+
+            else:
+                stable_checks = 0
+
+            previous_snapshot = snapshot
+            time.sleep(1)
+
+        else:
+            raise RuntimeError(
+                "Recording files are missing or not stable."
+            )
+
+        if not recording_files:
+            raise RuntimeError(
+                "No completed recording files were found."
+            )
+
+        logger.info(
+            "Found %s completed recording segments for live %s.",
+            len(recording_files),
+            stream_id,
+        )
+
+        # One segment can be used directly.
+        archive_source = recording_files[0]
+
+        # Merge multiple segments without re-encoding.
+        if len(recording_files) > 1:
+
+            ffmpeg_path = shutil.which("ffmpeg")
+
+            if not ffmpeg_path:
+                raise RuntimeError(
+                    "FFmpeg was not found."
+                )
+
+            concat_file = (
+                recording_dir
+                / f".archive-concat-{secrets.token_hex(8)}.txt"
+            )
+
+            merged_file = (
+                recording_dir
+                / f".archive-merged-{secrets.token_hex(8)}.mp4"
+            )
+
+            temporary_files.extend(
+                [concat_file, merged_file]
+            )
+
+            manifest_lines = []
+
+            for segment in recording_files:
+
+                escaped_path = (
+                    segment.resolve()
+                    .as_posix()
+                    .replace("'", "'\\''")
+                )
+
+                manifest_lines.append(
+                    f"file '{escaped_path}'"
+                )
+
+            concat_file.write_text(
+                "\n".join(manifest_lines),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    ffmpeg_path,
+                    "-hide_banner",
+                    "-loglevel", "error",
+                    "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", str(concat_file),
+                    "-map", "0:v:0",
+                    "-map", "0:a:0?",
+                    "-c", "copy",
+                    "-movflags", "+faststart",
+                    str(merged_file),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+
+            if (
+                result.returncode != 0
+                or not merged_file.is_file()
+                or merged_file.stat().st_size == 0
+            ):
+                raise RuntimeError(
+                    "Recording segments could not be merged: "
+                    f"{(result.stderr or '')[-1500:]}"
+                )
+
+            archive_source = merged_file
+
+        # Calculate duration before creating the Video.
+        duration = get_video_duration(
+            str(archive_source)
+        )
+
+        if duration <= 0:
+            raise RuntimeError(
+                "Could not determine archive duration."
+            )
+
+        # Create a permanent Video file.
+        video = Video(
+            user=live_stream.user,
+            title=live_stream.title,
+            description=live_stream.description or "",
+        )
+
+        archive_name = (
+            f"live_{stream_id}_{secrets.token_hex(6)}.mp4"
+        )
+
+        with archive_source.open("rb") as source_file:
+            video.video_file.save(
+                archive_name,
+                File(source_file),
+                save=False,
+            )
+
+        video.duration = duration
+        video.save()
+
+        # Attach the Video to its LiveStream.
+        with transaction.atomic():
+
+            locked_stream = (
+                LiveStream.objects
+                .select_for_update()
+                .get(pk=stream_id)
+            )
+
+            if locked_stream.archive_video_id:
+                raise RuntimeError(
+                    "An archive video is already attached."
+                )
+
+            if (
+                locked_stream.status != LiveStream.Status.ENDED
+                or locked_stream.active_source_id
+            ):
+                raise RuntimeError(
+                    "Stream state changed during archive processing."
+                )
+
+            locked_stream.archive_video = video
+
+            locked_stream.save(
+                update_fields=[
+                    "archive_video",
+                    "updated_at",
+                ]
+            )
+
+        # Generate HLS without re-encoding.
+        try:
+            hls_playlist = generate_hls(
+                video.video_file.path,
+                Path(settings.MEDIA_ROOT)
+                / "hls"
+                / str(video.id),
+            )
+
+            logger.info(
+                "HLS generated for archive video %s: %s",
+                video.id,
+                hls_playlist,
+            )
+
+        except (HLSGenerationError, OSError) as error:
+            # The original video remains available as a fallback.
+            logger.warning(
+                "HLS generation failed for archive video %s: %s",
+                video.id,
+                error,
+            )
+
+        # Mark the archive as completed.
+        with transaction.atomic():
+
+            locked_stream = (
+                LiveStream.objects
+                .select_for_update()
+                .get(pk=stream_id)
+            )
+
+            locked_stream.archive_status = (
+                LiveStream.ArchiveStatus.COMPLETED
+            )
+
+            locked_stream.save(
+                update_fields=[
+                    "archive_status",
+                    "updated_at",
+                ]
+            )
+
+        # Notify subscribers, without invalidating the archive.
+        try:
+            notify_subscribers_new_video(video)
+
+        except Exception:
+            logger.exception(
+                "Subscriber notification failed for archive video %s.",
+                video.id,
+            )
+
+        logger.info(
+            "Live archive completed. Live ID: %s, Video ID: %s",
+            stream_id,
+            video.id,
+        )
+
+        return Response(
+            {
+                "event": "archive",
+                "id": stream_id,
+                "status": "completed",
+                "video_id": video.id,
+                "title": video.title,
+                "duration": video.duration,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Live archive processing failed for stream %s.",
+            stream_id,
+        )
+
+        # Remove an incomplete Video and its stored file.
+        if video is not None:
+
+            stored_name = video.video_file.name
+
+            if video.pk:
+                video.delete()
+
+            if stored_name:
+                delete_file_safely(
+                    stored_name,
+                    "live archive",
+                )
+
+            if video.pk:
+                hls_dir = (
+                    Path(settings.MEDIA_ROOT)
+                    / "hls"
+                    / str(video.pk)
+                )
+
+                shutil.rmtree(
+                    hls_dir,
+                    ignore_errors=True,
+                )
+
+        LiveStream.objects.filter(
+            pk=stream_id,
+            archive_status=LiveStream.ArchiveStatus.PROCESSING,
+        ).update(
+            archive_status=LiveStream.ArchiveStatus.FAILED,
+            updated_at=timezone.now(),
+        )
+
+        return Response(
+            {"error": "Archive processing failed."},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    finally:
+
+        for temporary_file in temporary_files:
+            try:
+                temporary_file.unlink(missing_ok=True)
+            except OSError:
+                logger.warning(
+                    "Could not remove temporary archive file: %s",
+                    temporary_file,
+                )

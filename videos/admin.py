@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Video, Comment, Category, Profile, CommentReport, VideoSubtitle, VideoQuality
+from .models import Video, Comment, Category, Profile, CommentReport, VideoSubtitle, VideoQuality, LiveStreamReport, LiveChatMessageReport
 from django.utils import timezone
 
 admin.site.register(Video)
@@ -131,3 +131,110 @@ class VideoQualityAdmin(admin.ModelAdmin):
     list_filter = ("resolution", "created_at")
     search_fields = ("video__title",)
     list_select_related = ("video",)
+@admin.register(LiveStreamReport)
+class LiveStreamReportAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "live_stream",
+        "get_channel",
+        "reporter",
+        "reason",
+        "status",
+        "created_at",
+        "reviewed_at",
+    )
+
+    list_filter = ("status", "reason", "created_at")
+
+    search_fields = (
+        "live_stream__title",
+        "live_stream__user__username",
+        "reporter__username",
+        "details",
+    )
+
+    readonly_fields = ("created_at", "reviewed_at")
+
+    ordering = ("-created_at",)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            "reporter",
+            "live_stream",
+            "live_stream__user",
+        )
+
+    @admin.display(description="Channel")
+    def get_channel(self, obj):
+        return obj.live_stream.user.username
+
+    def save_model(self, request, obj, form, change):
+        if change and "status" in form.changed_data:
+            if obj.status in [
+                LiveStreamReport.Status.REVIEWED,
+                LiveStreamReport.Status.DISMISSED,
+                LiveStreamReport.Status.ACTION_TAKEN,
+            ]:
+                if obj.reviewed_at is None:
+                    obj.reviewed_at = timezone.now()
+            else:
+                obj.reviewed_at = None
+
+        super().save_model(request, obj, form, change)
+@admin.register(LiveChatMessageReport)
+class LiveChatMessageReportAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "chat_message",
+        "get_live_stream",
+        "get_message_author",
+        "reporter",
+        "reason",
+        "status",
+        "created_at",
+        "reviewed_at",
+    )
+
+    list_filter = ("status", "reason", "created_at")
+
+    search_fields = (
+        "chat_message__message",
+        "chat_message__user__username",
+        "chat_message__live_stream__title",
+        "reporter__username",
+        "details",
+    )
+
+    readonly_fields = ("created_at", "reviewed_at")
+
+    ordering = ("-created_at",)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            "reporter",
+            "chat_message",
+            "chat_message__user",
+            "chat_message__live_stream",
+        )
+
+    @admin.display(description="Live Stream")
+    def get_live_stream(self, obj):
+        return obj.chat_message.live_stream.title
+
+    @admin.display(description="Message Author")
+    def get_message_author(self, obj):
+        return obj.chat_message.user.username
+
+    def save_model(self, request, obj, form, change):
+        if change and "status" in form.changed_data:
+            if obj.status in [
+                LiveChatMessageReport.Status.REVIEWED,
+                LiveChatMessageReport.Status.DISMISSED,
+                LiveChatMessageReport.Status.ACTION_TAKEN,
+            ]:
+                if obj.reviewed_at is None:
+                    obj.reviewed_at = timezone.now()
+            else:
+                obj.reviewed_at = None
+
+        super().save_model(request, obj, form, change)

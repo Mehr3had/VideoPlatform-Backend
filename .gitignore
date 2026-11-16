@@ -31,3 +31,12 @@ media/video_qualities/
 
 # User profile images
 media/profile_images/
+# Runtime-generated media
+media/hls/
+media/live_recordings/
+media/live_thumbnails/
+media/stickers/
+
+# Temporary backup files
+*.bak
+*.bak-*

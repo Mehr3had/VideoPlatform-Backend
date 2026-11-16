@@ -220,6 +220,15 @@ class Comment(models.Model):
 
     text=models.TextField()
 
+    is_question = models.BooleanField(
+        default=False
+    )
+
+    spoiler_ranges = models.JSONField(
+        default=list,
+        blank=True
+    )
+
     is_removed = models.BooleanField(default=False)
 
     created_at=models.DateTimeField(
@@ -534,3 +543,316 @@ class VideoView(models.Model):
     created_at = models.DateTimeField(
         auto_now_add=True
     )
+
+
+class LiveStream(models.Model):
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        LIVE = "live", "Live"
+        ENDED = "ended", "Ended"
+        FAILED = "failed", "Failed"
+
+    class ArchiveStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="live_streams"
+    )
+
+    title = models.CharField(max_length=200)
+
+    description = models.TextField(
+        blank=True
+    )
+
+    thumbnail = models.ImageField(
+        upload_to="live_thumbnails/",
+        blank=True,
+        null=True,
+    )
+    # SHA-256 hash of the private stream key.
+    stream_key_hash = models.CharField(
+        max_length=64,
+        unique=True
+    )
+
+    # ID of the currently active MediaMTX publisher connection.
+    active_source_id = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+    )
+
+    status = models.CharField(
+        max_length=10,
+        choices=Status.choices,
+        default=Status.DRAFT
+    )
+
+    started_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    ended_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    archive_video = models.ForeignKey(
+        Video,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="live_streams"
+    )
+
+    archive_status = models.CharField(
+        max_length=10,
+        choices=ArchiveStatus.choices,
+        default=ArchiveStatus.PENDING,
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["status", "created_at"],
+                name="live_status_created_idx"
+            ),
+            models.Index(
+                fields=["user", "status"],
+                name="live_user_status_idx"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.title} - {self.user.username}"
+
+
+class LiveStreamReport(models.Model):
+
+    class Reason(models.TextChoices):
+        SPAM = "spam", "Spam"
+        HARASSMENT = "harassment", "Harassment or bullying"
+        HATE_SPEECH = "hate_speech", "Hate speech"
+        INAPPROPRIATE = "inappropriate", "Inappropriate content"
+        MISINFORMATION = "misinformation", "Misleading information"
+        OTHER = "other", "Other"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        REVIEWED = "reviewed", "Reviewed"
+        DISMISSED = "dismissed", "Dismissed"
+        ACTION_TAKEN = "action_taken", "Action taken"
+
+    reporter = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="live_stream_reports"
+    )
+
+    live_stream = models.ForeignKey(
+        LiveStream,
+        on_delete=models.CASCADE,
+        related_name="reports"
+    )
+
+    reason = models.CharField(
+        max_length=30,
+        choices=Reason.choices
+    )
+
+    details = models.TextField(
+        blank=True,
+        max_length=500
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    reviewed_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reporter", "live_stream"],
+                name="unique_live_stream_report_per_user"
+            )
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return (
+            f"{self.reporter.username} reported "
+            f"live stream {self.live_stream_id}"
+        )
+
+class LiveChatMessage(models.Model):
+
+    live_stream = models.ForeignKey(
+        LiveStream,
+        on_delete=models.CASCADE,
+        related_name="chat_messages"
+    )
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="live_chat_messages"
+    )
+
+    message = models.CharField(
+        max_length=500
+    )
+
+    is_removed = models.BooleanField(
+        default=False
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(
+                fields=["live_stream", "created_at"],
+                name="live_chat_stream_time_idx"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username}: {self.message[:40]}"
+
+
+class LiveChatMessageReport(models.Model):
+
+    class Reason(models.TextChoices):
+        SPAM = "spam", "Spam"
+        HARASSMENT = "harassment", "Harassment or bullying"
+        HATE_SPEECH = "hate_speech", "Hate speech"
+        INAPPROPRIATE = "inappropriate", "Inappropriate content"
+        MISINFORMATION = "misinformation", "Misleading information"
+        OTHER = "other", "Other"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        REVIEWED = "reviewed", "Reviewed"
+        DISMISSED = "dismissed", "Dismissed"
+        ACTION_TAKEN = "action_taken", "Action taken"
+
+    reporter = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="live_chat_message_reports"
+    )
+
+    chat_message = models.ForeignKey(
+        LiveChatMessage,
+        on_delete=models.CASCADE,
+        related_name="reports"
+    )
+
+    reason = models.CharField(
+        max_length=30,
+        choices=Reason.choices
+    )
+
+    details = models.TextField(
+        blank=True,
+        max_length=500
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    reviewed_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reporter", "chat_message"],
+                name="unique_live_chat_report_per_user"
+            )
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return (
+            f"{self.reporter.username} reported "
+            f"chat message {self.chat_message_id}"
+        )
+
+class LiveStreamReaction(models.Model):
+
+    LIKE = "like"
+    DISLIKE = "dislike"
+
+    REACTION_CHOICES = [
+        (LIKE, "Like"),
+        (DISLIKE, "Dislike"),
+    ]
+
+    live_stream = models.ForeignKey(
+        LiveStream,
+        on_delete=models.CASCADE,
+        related_name="reactions"
+    )
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="live_stream_reactions"
+    )
+
+    reaction_type = models.CharField(
+        max_length=10,
+        choices=REACTION_CHOICES
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "live_stream"],
+                name="unique_user_live_stream_reaction"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.reaction_type} - Live {self.live_stream_id}"

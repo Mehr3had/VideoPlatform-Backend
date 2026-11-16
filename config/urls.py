@@ -19,12 +19,20 @@ from django.urls import path,include # type: ignore
 from django.conf import settings # type: ignore
 from django.conf.urls.static import static # type: ignore
 from videos.views import home
+from django.shortcuts import redirect
+
+def frontend_login(request):
+    return redirect("http://127.0.0.1:3000/login")
+
+def frontend_register(request):
+    return redirect("http://127.0.0.1:3000/register")
 
 urlpatterns = [
     path("",home,name="home"),
-    path("admin/", admin.site.urls),
+    path("django-admin/", admin.site.urls),
     path("videos/",include("videos.urls")),
-
+    path("login/", frontend_login, name="login"),
+    path("register/", frontend_register, name="register"),
 ]
 
 urlpatterns+=static(
