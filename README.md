@@ -1,88 +1,95 @@
 # VideoPlatform Backend
 
-A Django REST API for a video-sharing platform inspired by YouTube and Aparat. This project focuses on backend development, authentication, video and comment management, subscriptions, notifications, and integration with a Next.js frontend.
+A Django REST Framework backend for a video-sharing platform inspired by YouTube and Aparat. It provides authentication, video and media management, comments, channel subscriptions, notifications, moderation, and live-streaming APIs for the Next.js frontend.
 
-## Related Repositories
+## Related repository
 
-- **Backend:** [VideoPlatform-Backend](https://github.com/Mehr3had/VideoPlatform-Backend)
 - **Frontend:** [VideoPlatform-Frontend](https://github.com/Mehr3had/VideoPlatform-Frontend)
+- **Backend:** [VideoPlatform-Backend](https://github.com/Mehr3had/VideoPlatform-Backend)
 
-## Tech Stack
+## Tech stack
 
-- Python
-- Django
-- Django REST Framework
-- Simple JWT
-- SQLite
-- Pillow
-- django-cors-headers
-- FFmpeg / FFprobe
-- Next.js (frontend)
+| Technology | Purpose |
+|---|---|
+| Python 3.14 | Backend runtime (tested locally) |
+| Django 6.1.1 | Web framework |
+| Django REST Framework 3.18.1 | REST APIs |
+| Simple JWT 5.5.1 | JWT authentication and refresh-token rotation |
+| SQLite | Default local development database |
+| Pillow 12.3.0 | Image processing |
+| django-cors-headers 4.9.0 | Frontend cross-origin requests |
+| FFmpeg / FFprobe | Media processing and metadata extraction |
+| MediaMTX 1.21.3 | RTMP ingest, HLS delivery, and live recording (local demo setup) |
+
+Exact Python dependency versions are pinned in [`requirements.txt`](requirements.txt).
 
 ## Features
 
-### Authentication and Account Management
+### Authentication and account management
 
-- User registration and JWT authentication
-- User profiles and profile editing
-- Username and password management
-- Forgot-username and password-reset workflows
-- Account deletion
+- User registration and JWT authentication.
+- Access-token refresh and refresh-token rotation with blacklist support.
+- User profiles and profile editing.
+- Username and password management.
+- Forgot-username and password-reset workflows.
+- Account deletion.
 
-### Video Management
+### Video management and playback
 
-- Upload, edit, and delete videos
-- Video thumbnails and view counts
-- Video duration extraction using FFprobe
-- Trending videos
-- Video reactions (likes and dislikes)
-- Category-based filtering
-- Search by video title and description
-- Paginated video listings
+- Upload, edit, and delete videos.
+- Video thumbnails, duration extraction, and view counts.
+- Trending videos, category filtering, title/description search, and pagination.
+- Video likes and dislikes.
+- Video-quality metadata and support for 480p, 720p, and 1080p files.
+- Persian and English subtitle support.
 
-### Video Playback Support
+> **Video quality processing:** the FFmpeg quality-generation utility is separate from the upload flow; uploading a video does not automatically generate every quality variant.
 
-- Multiple video quality support (480p, 720p, and 1080p)
-- Video quality metadata and file management
-- Persian and English subtitle support
-- Subtitle and quality information included in video detail responses
+### Comments and moderation
 
-**Note:** Video quality generation is currently implemented as a separate processing utility and is not automatically triggered during video uploads.
+- Comments, replies, editing, and deletion.
+- Comment likes and dislikes.
+- Question-style comments and spoiler-range metadata.
+- User reports and administrative review of reported comments.
 
-### Comments and Moderation
+### Subscriptions and notifications
 
-- Create comments and replies
-- Like and dislike comments
-- Edit and delete comments
-- Report inappropriate comments
-- Administrative report management
-- Comment moderation through Django Admin
+- Subscribe to and unsubscribe from channels.
+- Notifications for channel activity, new videos, comment replies, and interactions.
+- Notification preferences, unread counts, read status, and deletion.
+- Subscriber milestone notifications.
 
-### Subscriptions and Notifications
+### Live streaming
 
-- Subscribe to and unsubscribe from channels
-- Notifications for new videos from subscribed channels
-- Notifications for comment replies and interactions
-- Notification preferences
-- Unread notification counts
-- Mark notifications as read
-- Delete individual notifications or clear all notifications
-- Subscriber milestone notifications
+- Create and manage live streams through the API.
+- Generate a publisher credential for an RTMP stream.
+- Authenticate MediaMTX publishing requests through a Django HTTP-auth endpoint.
+- Track publisher online/offline events and update live-stream status.
+- Deliver the live stream through MediaMTX HLS.
+- Record live streams and request archive processing when a stream ends.
+- Live chat, message reporting, and live-stream reactions.
+- Live-stream reporting and administrative moderation for live-stream and chat reports.
 
-### User Dashboard
+The publisher secret is returned when a live stream is created and must be treated as a credential. Do not commit, log, or share it.
 
-- User dashboard and account settings
-- Profile and content management
-- Integration with the Next.js frontend
+### Media maintenance
 
-## Getting Started
+Two Django management commands help identify old, unused media:
+
+- `cleanup_hls` — checks eligible temporary, backup, or orphan HLS directories.
+- `cleanup_media` — checks media files that are no longer referenced by database records.
+
+Both commands are designed to preview eligible items by default. Use `--execute` only after reviewing the output. The default age threshold is 24 hours and can be changed with `--older-than-hours`.
+
+## Getting started
 
 ### Prerequisites
 
-- Python compatible with the project's installed Django version
-- Git
-- FFmpeg and FFprobe available in the system PATH
-- Node.js and npm if you also want to run the frontend
+- Git.
+- Python 3.14 (the version used for local verification).
+- FFmpeg and FFprobe available on `PATH` for media operations.
+- Node.js and npm if you also run the frontend.
+- MediaMTX 1.21.3 or a compatible version for live streaming.
 
 ### 1. Clone the repository
 
@@ -93,42 +100,47 @@ cd VideoPlatform-Backend
 
 ### 2. Create and activate a virtual environment
 
-On Windows PowerShell:
+Windows PowerShell:
 
 ```powershell
-py -m venv venv
-.\venv\Scripts\Activate.ps1
+py -3.14 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 ```
 
-### 3. Install dependencies
+If PowerShell blocks activation, use the virtual-environment interpreter directly or follow your local PowerShell execution-policy guidance.
+
+### 3. Install Python dependencies
 
 ```powershell
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
 ### 4. Configure environment variables
 
-Create a `.env` file in the project root and configure the Django secret key:
+Create a `.env` file in the backend project root:
 
 ```dotenv
-DJANGO_SECRET_KEY=your-generated-secret-key
+DJANGO_SECRET_KEY=replace-with-a-long-random-secret
+LIVE_WEBHOOK_TOKEN=replace-with-a-separate-random-token
 ```
 
-Generate a secure key with:
+Generate values locally:
 
 ```powershell
 python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Copy the generated value into `.env`. Never commit your secret key or share it publicly.
+Use the first value for `DJANGO_SECRET_KEY` and the second for `LIVE_WEBHOOK_TOKEN`. Keep `.env` private; never commit these values or paste them into issue reports.
 
-### 5. Apply database migrations
+### 5. Apply migrations
 
 ```powershell
 python manage.py migrate
 ```
 
-This applies the database migrations to the local SQLite database.
+The default development configuration uses SQLite and creates `db.sqlite3` locally.
 
 ### 6. Create an administrator (optional)
 
@@ -136,121 +148,166 @@ This applies the database migrations to the local SQLite database.
 python manage.py createsuperuser
 ```
 
-### 7. Run the development server
+### 7. Run Django
 
 ```powershell
-python manage.py runserver
+python manage.py runserver 127.0.0.1:8000
 ```
 
-The backend will be available at:
+Local addresses:
 
-- Application: `http://127.0.0.1:8000/`
+- Django application: `http://127.0.0.1:8000/`
 - Django Admin: `http://127.0.0.1:8000/admin/`
 - Video application routes: `http://127.0.0.1:8000/videos/`
-- API routes: `http://127.0.0.1:8000/videos/api/`
+- API root: `http://127.0.0.1:8000/videos/api/`
 
-## API Overview
+The current development settings allow `localhost` and `127.0.0.1` as hosts and allow the frontend origin `http://localhost:3000` for CORS and CSRF. Update these settings deliberately when using a different local origin or deployment domain.
 
-The following table lists selected API endpoints. The application-specific endpoints are mounted under `/videos/`.
+## Live streaming setup
+
+Live streaming uses Django for stream creation and authorization, MediaMTX for RTMP ingest/HLS delivery/recording, and the frontend for the creator and viewer interfaces.
+
+### MediaMTX configuration
+
+The local demo configuration uses the following settings:
+
+| Setting | Local demo value |
+|---|---|
+| HTTP authentication | Django MediaMTX-auth endpoint |
+| Auth endpoint | `http://127.0.0.1:8000/videos/api/live/mediamtx-auth/` |
+| RTMP listener | `127.0.0.1:1935` |
+| HLS listener | `127.0.0.1:8888` |
+| HLS variant | `mpegts` |
+| HLS segment count | `35` |
+| HLS segment duration | `2s` |
+| HLS muxer close timeout | `10s` |
+| Recording format | `fmp4` |
+| Recording part duration | `1s` |
+| Recording segment duration | `1h` |
+| Recording retention | `168h` (7 days) |
+
+With 35 segments of approximately 2 seconds each, the configured HLS playlist represents an approximately 70-second rolling window. Actual playback availability can vary with stream and player behavior.
+
+The MediaMTX configuration file is a local deployment asset and is not included in this repository. Create or adapt your own configuration; do not copy machine-specific absolute paths from another developer's setup.
+
+### Webhook integration
+
+`mediamtx_webhook.py` sends publisher lifecycle events to the Django API. It expects:
+
+- `LIVE_WEBHOOK_TOKEN` to be configured in the backend `.env` file.
+- MediaMTX to provide `MTX_PATH` and `MTX_SOURCE_ID` for the event.
+- The Django API to be reachable at `http://127.0.0.1:8000` from the MediaMTX process.
+- MediaMTX ready/not-ready hooks to invoke the script with the `online` and `offline` event argument respectively.
+
+The webhook updates the stream state. On a confirmed offline event, it can request archive processing through the backend archive endpoint. Keep the webhook token private and configure the hooks using paths and Python executable locations appropriate to your operating system.
+
+### Publisher and playback flow
+
+1. Start Django and MediaMTX.
+2. Open the frontend Live Studio and create a live stream.
+3. Use the RTMP publishing address and one-time stream credential returned by the API in OBS or a compatible RTMP publisher such as FFmpeg.
+4. MediaMTX authenticates the publisher through Django and serves HLS to viewers.
+5. The MediaMTX webhook reports online/offline events to Django; after a confirmed end event, archive processing is requested.
+
+The publisher credential is sensitive. Do not include an actual stream key in documentation, screenshots, logs, or Git commits.
+
+## API overview
+
+Application API routes are mounted under `/videos/api/`.
 
 | Endpoint | Purpose |
 |---|---|
-| `/videos/api/register/` | User registration |
-| `/videos/api/login/` | User login |
-| `/videos/api/refresh/` | Refresh JWT access token |
-| `/videos/api/me/` | Current user information |
-| `/videos/api/account/username/` | Change username |
-| `/videos/api/account/password/` | Change password |
-| `/videos/api/account/delete/` | Delete account |
-| `/videos/api/password-reset/` | Request a password reset |
-| `/videos/api/password-reset/confirm/` | Confirm a password reset |
+| `POST /videos/api/register/` | Register a user |
+| `POST /videos/api/login/` | Obtain JWT tokens |
+| `POST /videos/api/refresh/` | Refresh an access token |
+| `/videos/api/me/` | Current-user information |
 | `/videos/api/videos/` | List and search videos |
-| `/videos/api/videos/upload/` | Upload a video |
-| `/videos/api/videos/trending/` | Retrieve trending videos |
-| `/videos/api/videos/<video_id>/` | Retrieve video details, qualities, and subtitles |
-| `/videos/api/categories/` | Retrieve categories |
-| `/videos/api/users/<user_id>/` | Retrieve a user profile |
-| `/videos/api/users/<user_id>/videos/` | Retrieve videos uploaded by a user |
-| `/videos/api/users/<user_id>/subscribe/` | Manage a channel subscription |
-| `/videos/<video_id>/react/` | Retrieve or update a video reaction |
-| `/videos/<video_id>/comments/` | Retrieve and create comments |
-| `/videos/api/comments/<comment_id>/like/` | Like a comment |
-| `/videos/api/comments/<comment_id>/report/` | Report a comment |
-| `/videos/api/notifications/` | Retrieve notifications |
-| `/videos/api/notifications/unread-count/` | Retrieve the unread notification count |
-| `/videos/api/notification-preferences/` | Manage notification preferences |
-| `/videos/api/admin/reports/` | Review comment reports |
+| `POST /videos/api/videos/upload/` | Upload a video |
+| `/videos/api/videos/<video_id>/` | Video details, qualities, and subtitles |
+| `/videos/api/categories/` | List categories |
+| `/videos/api/users/<user_id>/` | User profile |
+| `/videos/api/users/<user_id>/subscribe/` | Subscribe to or unsubscribe from a channel |
+| `/videos/api/notifications/` | Notifications |
+| `/videos/api/notification-preferences/` | Notification preferences |
+| `/videos/api/live/` | Create a live stream |
+| `/videos/api/live/active/` | List active live streams |
+| `/videos/api/live/<live_id>/` | Live-stream details |
+| `/videos/api/live/<live_id>/chat/` | Read or send live-chat messages |
+| `/videos/api/live/<live_id>/react/` | Live-stream reactions |
+| `/videos/api/live/<live_id>/report/` | Report a live stream |
+| `/videos/api/live/<live_id>/chat/<message_id>/report/` | Report a live-chat message |
+| `/videos/api/admin/live-reports/` | Review live-stream reports |
+| `/videos/api/admin/live-chat-reports/` | Review live-chat reports |
+| `/videos/api/live/mediamtx-auth/` | MediaMTX publisher authentication |
+| `/videos/api/live/mediamtx-event/` | Receive MediaMTX lifecycle events |
+| `/videos/api/live/mediamtx-archive/` | Request live archive processing |
 
-HTTP methods, authentication requirements, and request payloads vary by endpoint. Refer to the corresponding view in `videos/views.py` for the exact behavior.
+Authentication and HTTP methods vary by endpoint. The table is an overview; inspect `videos/urls.py` and the corresponding views for request methods, permissions, and payload details.
 
-## Search, Filtering, and Pagination
+## Video processing
 
-The video listing endpoint supports searching by title or description, filtering by category, and paginating results.
+- FFprobe extracts video duration during upload.
+- An FFmpeg utility can generate 480p, 720p, and 1080p variants, skipping resolutions above the source resolution.
+- Quality generation is a separate operation and is not automatically triggered by upload.
+- Media files are stored under `MEDIA_ROOT` (by default, the backend `media/` directory).
 
-Example request:
+## Maintenance commands
 
-```http
-GET /videos/api/videos/?search=Batman&category=1&page=2&page_size=10
+Preview old/orphan HLS directories:
+
+```powershell
+python manage.py cleanup_hls
 ```
 
-Query parameters:
+Execute eligible HLS cleanup after reviewing the preview:
 
-| Parameter | Description |
-|---|---|
-| `search` | Search video titles and descriptions |
-| `category` | Filter videos by category ID |
-| `page` | Select the results page |
-| `page_size` | Choose the number of results per page |
+```powershell
+python manage.py cleanup_hls --execute
+```
 
-Pagination defaults to **6 videos per page**, with a configurable maximum of **20 videos per page**.
+Preview media files not referenced by database records:
 
-## Video Processing
+```powershell
+python manage.py cleanup_media
+```
 
-The backend uses FFprobe to extract video duration during upload.
+Execute eligible media cleanup after reviewing the preview:
 
-A separate video-processing utility uses FFmpeg to generate different video resolutions:
+```powershell
+python manage.py cleanup_media --execute
+```
 
-- 480p
-- 720p
-- 1080p
+Both commands accept `--older-than-hours` to change the default 24-hour threshold. Always review the dry-run output before using `--execute`, especially on a database containing user uploads.
 
-The utility skips resolutions higher than the source video's resolution. Generated video files and subtitle files are stored in the media directory and are excluded from version control.
+## Frontend integration
 
-Video quality generation currently requires invoking the processing utility separately.
+The companion frontend is a Next.js application. For local development, it typically runs at `http://localhost:3000`.
 
-## Frontend Integration
-
-The frontend is built with Next.js and runs locally at `http://localhost:3000`.
-
-Configure the frontend's `.env.local` file:
+Set the frontend `.env.local` file to:
 
 ```dotenv
 NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 ```
 
-The frontend uses this variable as the base URL for backend requests and resource URLs.
+The current backend CORS and CSRF settings allow `http://localhost:3000`. See the [frontend README](https://github.com/Mehr3had/VideoPlatform-Frontend#readme) for installation and run instructions.
 
-Ensure that Django's CORS configuration allows requests from the frontend origin. See the [frontend repository](https://github.com/Mehr3had/VideoPlatform-Frontend) for frontend setup instructions.
+## Local data and files
 
-## Media Files and Local Data
+A fresh clone does not include the local SQLite database or uploaded media. The following runtime data is intentionally excluded from Git: uploaded videos, generated HLS segments, live recordings, generated thumbnails, subtitles, profile images, and other local media. The frontend's static Pishi sticker assets are stored in the frontend repository.
 
-Uploaded videos, thumbnails, profile images, subtitles, generated video qualities, and the local SQLite database are excluded from version control.
+After migrations, create an administrator, add categories, and upload your own sample content as needed.
 
-A fresh clone will not include locally uploaded media or sample content created during development. After applying migrations, create categories and upload your own videos and thumbnails through Django Admin or the available API endpoints.
+## Security and deployment notes
 
-Subtitles and video quality records can be managed through Django Admin.
+- Keep `.env`, `DJANGO_SECRET_KEY`, `LIVE_WEBHOOK_TOKEN`, JWTs, and publisher credentials out of version control.
+- Never use the development `DEBUG=True` configuration as a production configuration.
+- Configure `ALLOWED_HOSTS`, CORS, CSRF trusted origins, HTTPS, database, media storage, and webhook networking for your deployment.
+- Restrict MediaMTX RTMP/HLS listeners and webhook access according to your network design.
+- This repository's SQLite and local media configuration is intended for development/demo use, not a production deployment recipe.
 
-## Security Notes
+## Project status
 
-- Keep `.env` out of version control.
-- Use a unique secret key.
-- Keep `DEBUG=True` restricted to local development.
-- Configure `ALLOWED_HOSTS`, HTTPS, database settings, and media storage before production deployment.
-- Never publish real credentials, secret keys, or authentication tokens.
-
-## Project Status
-
-This is a full-stack learning and portfolio project demonstrating Django REST API development and integration with a Next.js frontend. Features are developed incrementally; production deployment and comprehensive security testing should be considered separate tasks.
+VideoPlatform is a full-stack learning and portfolio project. Features are developed incrementally; production deployment, operational monitoring, and comprehensive security testing are separate tasks.
 
 ## License
 
