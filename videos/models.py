@@ -427,6 +427,87 @@ class CommentReport(models.Model):
             f"comment {self.comment_id}"
         )
 
+
+class VideoReport(models.Model):
+
+    class Reason(models.TextChoices):
+        SPAM = "spam", "Spam"
+        HARASSMENT = "harassment", "Harassment or bullying"
+        HATE_SPEECH = "hate_speech", "Hate speech"
+        INAPPROPRIATE = "inappropriate", "Inappropriate content"
+        MISINFORMATION = "misinformation", "Misleading information"
+        OTHER = "other", "Other"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        REVIEWED = "reviewed", "Reviewed"
+        DISMISSED = "dismissed", "Dismissed"
+        ACTION_TAKEN = "action_taken", "Action taken"
+
+    reporter = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="video_reports"
+    )
+
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reports"
+    )
+
+    video_title = models.CharField(
+        max_length=200,
+        blank=True,
+        default=""
+    )
+
+    video_owner = models.CharField(
+        max_length=150,
+        blank=True,
+        default=""
+    )
+
+    reason = models.CharField(
+        max_length=30,
+        choices=Reason.choices
+    )
+
+    details = models.TextField(
+        blank=True,
+        max_length=500
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    reviewed_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reporter", "video"],
+                name="unique_video_report_per_user"
+            )
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return (
+            f"{self.reporter.username} reported "
+            f"video {self.video_id}"
+        )
+
 class SubscriberMilestone(models.Model):
     user = models.ForeignKey(
         User,

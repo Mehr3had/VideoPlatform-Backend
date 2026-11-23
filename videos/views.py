@@ -1,6 +1,6 @@
 from django.shortcuts import render,get_object_or_404,redirect # type: ignore
 from .models import CommentDislike, CommentReport, Video,VideoReaction,Category,Subscription,Profile,VideoView
-from .models import Comment, CommentLike, Notification, NotificationPreference,SubscriberMilestone,LiveStream,LiveChatMessage,LiveStreamReaction,LiveStreamReport,LiveChatMessageReport
+from .models import Comment, CommentLike, Notification, NotificationPreference,SubscriberMilestone,LiveStream,LiveChatMessage,LiveStreamReaction,LiveStreamReport,LiveChatMessageReport, VideoReport
 from django.contrib.auth.decorators import login_required # type: ignore
 from django.contrib.auth.models import User # type: ignore
 from rest_framework.response import Response # type: ignore
@@ -889,12 +889,13 @@ def user_videos_api(request, user_id):
 
     videos = Video.objects.filter(
         user=user
-    ).order_by("-created_at")
+    ).select_related("user__profile", "category").order_by("-created_at")
 
     data = []
 
     for video in videos:
 
+        profile = getattr(video.user, "profile", None)
         data.append({
             "id": video.id,
             "title": video.title,
@@ -910,7 +911,15 @@ def user_videos_api(request, user_id):
                 video.video_file.url
             ),
             "views_count": video.views_count,
+            "duration": video.duration,
+            "category_name": video.category.name if video.category else None,
             "username": video.user.username,
+            "user_id": video.user_id,
+            "profile_image": (
+                request.build_absolute_uri(profile.profile_image.url)
+                if profile and profile.profile_image
+                else None
+            ),
             "created_at": video.created_at,
         })
 
@@ -966,7 +975,7 @@ def video_list_api(request):
     search = request.GET.get("search", "").strip()
     category_id = request.GET.get("category")
 
-    videos = Video.objects.all().order_by("-created_at")
+    videos = Video.objects.select_related("user__profile", "category").all().order_by("-created_at")
 
     if search:
         videos = videos.filter(title__icontains=search)
@@ -981,6 +990,7 @@ def video_list_api(request):
     data = []
 
     for video in page:
+        profile = getattr(video.user, "profile", None)
         data.append({
             "id": video.id,
             "title": video.title,
@@ -992,6 +1002,12 @@ def video_list_api(request):
             "video_file": request.build_absolute_uri(video.video_file.url),
             "views_count": video.views_count,
             "username": video.user.username,
+            "user_id": video.user_id,
+            "profile_image": (
+                request.build_absolute_uri(profile.profile_image.url)
+                if profile and profile.profile_image
+                else None
+            ),
             "duration": video.duration,
             "created_at": video.created_at,
             "category_id": video.category.id if video.category else None,
@@ -1002,11 +1018,12 @@ def video_list_api(request):
 
 @api_view(["GET"])
 def trending_videos_api(request):
-    videos = Video.objects.all().order_by("-views_count", "-created_at")[:6]
+    videos = Video.objects.select_related("user__profile", "category").all().order_by("-views_count", "-created_at")[:6]
 
     data = []
 
     for video in videos:
+        profile = getattr(video.user, "profile", None)
         data.append({
             "id": video.id,
             "title": video.title,
@@ -1016,6 +1033,12 @@ def trending_videos_api(request):
             ),
             "views_count": video.views_count,
             "username": video.user.username,
+            "user_id": video.user_id,
+            "profile_image": (
+                request.build_absolute_uri(profile.profile_image.url)
+                if profile and profile.profile_image
+                else None
+            ),
             "duration": video.duration,
             "created_at": video.created_at,
         })
@@ -1716,6 +1739,72 @@ def report_comment_api(request, comment_id):
 
 
 
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def report_video_api(request, video_id):
+    video = get_object_or_404(Video, id=video_id)
+
+    if video.user_id == request.user.id:
+        return Response(
+            {"error": "You cannot report your own video."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    reason = request.data.get("reason", "")
+    details = request.data.get("details", "")
+
+    if not isinstance(reason, str) or not isinstance(details, str):
+        return Response(
+            {"error": "Invalid report data."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    reason = reason.strip()
+    details = details.strip()
+
+    allowed_reasons = [
+        choice[0] for choice in VideoReport.Reason.choices
+    ]
+
+    if reason not in allowed_reasons:
+        return Response(
+            {"error": "Invalid report reason."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if len(details) > 500:
+        return Response(
+            {"error": "Report details must be 500 characters or less."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    report, created = VideoReport.objects.get_or_create(
+        reporter=request.user,
+        video=video,
+        defaults={
+            "reason": reason,
+            "details": details,
+            "video_title": video.title,
+            "video_owner": video.user.username,
+        },
+    )
+
+    if not created:
+        return Response(
+            {"error": "You have already reported this video."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    return Response(
+        {
+            "message": "Video report submitted successfully.",
+            "report_id": report.id,
+            "status": report.status,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
 @api_view(["GET"])
 @permission_classes([IsAdminUser])
 def admin_live_chat_reports_api(request):
@@ -2097,6 +2186,281 @@ def update_admin_live_report_api(request, report_id):
             "status": report.status,
             "status_display": report.get_status_display(),
             "reviewed_at": report.reviewed_at.isoformat(),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAdminUser])
+def admin_video_reports_api(request):
+    reports = (
+        VideoReport.objects
+        .select_related("reporter", "video", "video__user")
+        .order_by("-created_at", "-id")
+    )
+
+    pending_count = VideoReport.objects.filter(
+        status=VideoReport.Status.PENDING
+    ).count()
+
+    reviewed_count = VideoReport.objects.filter(
+        status=VideoReport.Status.REVIEWED
+    ).count()
+
+    dismissed_count = VideoReport.objects.filter(
+        status=VideoReport.Status.DISMISSED
+    ).count()
+
+    action_taken_count = VideoReport.objects.filter(
+        status=VideoReport.Status.ACTION_TAKEN
+    ).count()
+
+    report_status = request.query_params.get("status", "all")
+    allowed_statuses = [
+        choice[0] for choice in VideoReport.Status.choices
+    ]
+
+    if report_status != "all":
+        if report_status not in allowed_statuses:
+            return Response(
+                {"error": "Invalid report status."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reports = reports.filter(status=report_status)
+
+    search = request.query_params.get("search", "").strip()
+
+    if search:
+        search_filter = (
+            Q(video_title__icontains=search)
+            | Q(video_owner__icontains=search)
+            | Q(reporter__username__icontains=search)
+            | Q(reason__icontains=search)
+            | Q(details__icontains=search)
+        )
+
+        if search.isdigit():
+            search_filter |= (
+                Q(id=int(search))
+                | Q(video_id=int(search))
+            )
+
+        reports = reports.filter(search_filter)
+
+    ordering = request.query_params.get("ordering", "newest")
+
+    if ordering == "newest":
+        reports = reports.order_by("-created_at", "-id")
+    elif ordering == "oldest":
+        reports = reports.order_by("created_at", "id")
+    else:
+        return Response(
+            {"error": "Invalid ordering."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        page_number = int(request.query_params.get("page", 1))
+        page_size = int(request.query_params.get("page_size", 10))
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "Page and page_size must be integers."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if page_number < 1 or page_size < 1 or page_size > 100:
+        return Response(
+            {"error": "Invalid page or page_size."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    paginator = Paginator(reports, page_size)
+    page_obj = paginator.get_page(page_number)
+
+    data = [
+        {
+            "id": report.id,
+            "video_id": report.video_id,
+            "video_title": (
+                report.video_title
+                or (report.video.title if report.video else "")
+            ),
+            "video_owner": (
+                report.video_owner
+                or (
+                    report.video.user.username
+                    if report.video and report.video.user_id
+                    else ""
+                )
+            ),
+            "reporter": report.reporter.username,
+            "reason": report.reason,
+            "reason_display": report.get_reason_display(),
+            "details": report.details,
+            "status": report.status,
+            "status_display": report.get_status_display(),
+            "created_at": report.created_at.isoformat(),
+            "reviewed_at": (
+                report.reviewed_at.isoformat()
+                if report.reviewed_at
+                else None
+            ),
+        }
+        for report in page_obj.object_list
+    ]
+
+    return Response({
+        "pending_count": pending_count,
+        "reviewed_count": reviewed_count,
+        "dismissed_count": dismissed_count,
+        "action_taken_count": action_taken_count,
+        "total_count": paginator.count,
+        "total_pages": paginator.num_pages,
+        "current_page": page_obj.number,
+        "page_size": page_size,
+        "has_next": page_obj.has_next(),
+        "has_previous": page_obj.has_previous(),
+        "reports": data,
+    })
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAdminUser])
+def update_admin_video_report_api(request, report_id):
+    report = get_object_or_404(
+        VideoReport,
+        id=report_id,
+    )
+
+    new_status = request.data.get("status")
+
+    allowed_statuses = [
+        VideoReport.Status.REVIEWED,
+        VideoReport.Status.DISMISSED,
+    ]
+
+    if new_status not in allowed_statuses:
+        return Response(
+            {"error": "Invalid report status."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    report.status = new_status
+    report.reviewed_at = timezone.now()
+
+    report.save(
+        update_fields=["status", "reviewed_at"]
+    )
+
+    return Response(
+        {
+            "id": report.id,
+            "status": report.status,
+            "status_display": report.get_status_display(),
+            "reviewed_at": report.reviewed_at.isoformat(),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAdminUser])
+def delete_admin_reported_video_api(request, report_id):
+    report = get_object_or_404(
+        VideoReport.objects.select_related("video", "video__user"),
+        id=report_id,
+    )
+
+    video = report.video
+
+    if video is None:
+        return Response(
+            {"error": "This video has already been deleted."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    video_id = video.id
+    video_title = video.title or ""
+    video_owner = video.user.username if video.user_id else ""
+
+    hls_dir = settings.MEDIA_ROOT / "hls" / str(video_id)
+
+    files_to_delete = []
+
+    if video.video_file:
+        files_to_delete.append(video.video_file.name)
+
+    if video.thumbnail:
+        files_to_delete.append(video.thumbnail.name)
+
+    quality_files = video.qualities.exclude(
+        video_file=""
+    ).values_list(
+        "video_file",
+        flat=True,
+    )
+    files_to_delete.extend(quality_files)
+
+    subtitle_files = video.subtitles.exclude(
+        subtitle_file=""
+    ).values_list(
+        "subtitle_file",
+        flat=True,
+    )
+    files_to_delete.extend(subtitle_files)
+
+    files_to_delete = list(dict.fromkeys(
+        file_name for file_name in files_to_delete if file_name
+    ))
+
+    def delete_video_files():
+        for file_name in files_to_delete:
+            try:
+                default_storage.delete(file_name)
+            except Exception:
+                logger.exception(
+                    "Failed to delete media file: %s",
+                    file_name,
+                )
+
+        try:
+            if hls_dir.exists():
+                shutil.rmtree(hls_dir)
+                logger.info(
+                    "HLS files deleted for video %s",
+                    video_id,
+                )
+        except OSError:
+            logger.exception(
+                "Failed to delete HLS files for video %s",
+                video_id,
+            )
+
+    now = timezone.now()
+
+    with transaction.atomic():
+        # Keep every report and its video details after deleting the video.
+        VideoReport.objects.filter(video=video).update(
+            video=None,
+            video_title=video_title,
+            video_owner=video_owner,
+            status=VideoReport.Status.ACTION_TAKEN,
+            reviewed_at=now,
+        )
+
+        video.delete()
+        transaction.on_commit(delete_video_files)
+
+    return Response(
+        {
+            "message": "Video deleted successfully.",
+            "video_id": video_id,
+            "video_title": video_title,
+            "video_owner": video_owner,
+            "status": VideoReport.Status.ACTION_TAKEN,
+            "reviewed_at": now.isoformat(),
         },
         status=status.HTTP_200_OK,
     )
@@ -3436,15 +3800,32 @@ def live_stream_detail_api(request, live_id):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def active_live_streams_api(request):
+    # Guests do not have subscribed channels.
+    if not request.user.is_authenticated:
+        return Response([], status=status.HTTP_200_OK)
+
     live_streams = (
         LiveStream.objects
-        .filter(status=LiveStream.Status.LIVE)
-        .select_related("user")
+        .filter(
+            status=LiveStream.Status.LIVE,
+            user__subscribers__subscriber=request.user,
+        )
+        .select_related("user", "user__profile")
+        .distinct()
         .order_by("-started_at", "-created_at")
     )
 
-    data = [
-        {
+    data = []
+
+    for live_stream in live_streams:
+        profile = getattr(live_stream.user, "profile", None)
+        profile_image = (
+            profile.profile_image
+            if profile and profile.profile_image
+            else None
+        )
+
+        data.append({
             "id": live_stream.id,
             "title": live_stream.title,
             "description": live_stream.description,
@@ -3456,15 +3837,18 @@ def active_live_streams_api(request):
             "owner": {
                 "id": live_stream.user_id,
                 "username": live_stream.user.username,
+                "profile_image": (
+                    request.build_absolute_uri(profile_image.url)
+                    if profile_image
+                    else None
+                ),
             },
             "started_at": (
                 live_stream.started_at.isoformat()
                 if live_stream.started_at
                 else None
             ),
-        }
-        for live_stream in live_streams
-    ]
+        })
 
     return Response(data, status=status.HTTP_200_OK)
 
@@ -4476,6 +4860,144 @@ def mediamtx_archive_api(request):
             description=live_stream.description or "",
         )
 
+        # Prefer the thumbnail selected when creating the live stream.
+        thumbnail_saved = False
+
+        if live_stream.thumbnail:
+            try:
+                thumbnail_extension = Path(
+                    live_stream.thumbnail.name
+                ).suffix.lower()
+
+                if thumbnail_extension not in {
+                    ".jpg", ".jpeg", ".png", ".webp"
+                }:
+                    raise RuntimeError(
+                        "Unsupported live thumbnail extension."
+                    )
+
+                thumbnail_name = (
+                    f"live_{stream_id}_{secrets.token_hex(6)}"
+                    f"{thumbnail_extension}"
+                )
+
+                with live_stream.thumbnail.open("rb") as source_thumbnail:
+                    video.thumbnail.save(
+                        thumbnail_name,
+                        File(source_thumbnail),
+                        save=False,
+                    )
+
+                thumbnail_saved = bool(video.thumbnail.name)
+
+                if thumbnail_saved:
+                    logger.info(
+                        "Live thumbnail copied to archive. "
+                        "Live ID: %s",
+                        stream_id,
+                    )
+
+            except Exception:
+                logger.exception(
+                    "Could not copy live thumbnail for stream %s.",
+                    stream_id,
+                )
+
+                if video.thumbnail.name:
+                    delete_file_safely(
+                        video.thumbnail.name,
+                        "incomplete live archive thumbnail",
+                    )
+                    video.thumbnail.name = ""
+
+        # If no custom thumbnail is available, extract one from the archive.
+        if not thumbnail_saved:
+            thumbnail_temp = (
+                recording_dir
+                / f".archive-thumbnail-{secrets.token_hex(8)}.jpg"
+            )
+
+            temporary_files.append(thumbnail_temp)
+
+            try:
+                ffmpeg_path = shutil.which("ffmpeg")
+
+                if not ffmpeg_path:
+                    raise RuntimeError(
+                        "FFmpeg was not found for thumbnail extraction."
+                    )
+
+                thumbnail_time = min(
+                    3.0,
+                    max(0.0, duration * 0.1),
+                )
+
+                result = subprocess.run(
+                    [
+                        ffmpeg_path,
+                        "-hide_banner",
+                        "-loglevel", "error",
+                        "-y",
+                        "-ss", f"{thumbnail_time:.3f}",
+                        "-i", str(archive_source),
+                        "-map", "0:v:0",
+                        "-frames:v", "1",
+                        "-vf", "scale=640:-2:flags=lanczos",
+                        "-q:v", "3",
+                        str(thumbnail_temp),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+
+                if (
+                    result.returncode != 0
+                    or not thumbnail_temp.is_file()
+                    or thumbnail_temp.stat().st_size == 0
+                ):
+                    raise RuntimeError(
+                        "FFmpeg thumbnail extraction failed: "
+                        f"{(result.stderr or '')[-1000:]}"
+                    )
+
+                generated_thumbnail_name = (
+                    f"live_{stream_id}_{secrets.token_hex(6)}.jpg"
+                )
+
+                with thumbnail_temp.open("rb") as source_thumbnail:
+                    video.thumbnail.save(
+                        generated_thumbnail_name,
+                        File(source_thumbnail),
+                        save=False,
+                    )
+
+                thumbnail_saved = bool(video.thumbnail.name)
+
+                if not thumbnail_saved:
+                    raise RuntimeError(
+                        "Generated thumbnail was not stored."
+                    )
+
+                logger.info(
+                    "Thumbnail extracted from live archive. "
+                    "Live ID: %s",
+                    stream_id,
+                )
+
+            except Exception:
+                logger.exception(
+                    "Thumbnail extraction failed for stream %s. "
+                    "Archive will continue without a thumbnail.",
+                    stream_id,
+                )
+
+                if video.thumbnail.name:
+                    delete_file_safely(
+                        video.thumbnail.name,
+                        "incomplete generated live thumbnail",
+                    )
+                    video.thumbnail.name = ""
         archive_name = (
             f"live_{stream_id}_{secrets.token_hex(6)}.mp4"
         )
@@ -4603,6 +5125,14 @@ def mediamtx_archive_api(request):
         if video is not None:
 
             stored_name = video.video_file.name
+            stored_thumbnail_name = video.thumbnail.name
+
+            if stored_thumbnail_name:
+                delete_file_safely(
+                    stored_thumbnail_name,
+                    "live archive thumbnail",
+                )
+
 
             if video.pk:
                 video.delete()
