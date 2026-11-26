@@ -269,12 +269,64 @@ Application API routes are mounted under `/videos/api/`.
 
 Authentication and HTTP methods vary by endpoint. The table is an overview; inspect `videos/urls.py` and the corresponding views for request methods, permissions, and payload details.
 
-## Video processing
+### Versioned API (v1)
 
-- FFprobe extracts video duration during upload.
-- An FFmpeg utility can generate 480p, 720p, and 1080p variants, skipping resolutions above the source resolution.
-- Quality generation is a separate operation and is not automatically triggered by upload.
-- Media files are stored under `MEDIA_ROOT` (by default, the backend `media/` directory).
+The backend provides a versioned API namespace under:
+
+`/videos/api/v1/`
+
+API v1 includes the platform's existing application endpoints and dedicated
+user-data endpoints. The legacy `/videos/api/` routes are retained
+for backward compatibility.
+
+#### User preferences
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/videos/api/v1/user-preferences/` | Retrieve the authenticated user's preferences |
+| PATCH | `/videos/api/v1/user-preferences/` | Update user preferences |
+
+Supported preference fields:
+
+| Field | Allowed values |
+|---|---|
+| `language` | `fa`, `en` |
+| `theme` | `light`, `dark` |
+| `accent` | Six-digit hex color (e.g. `#8b5cf6`) |
+| `background_style` | `default`, `soft`, `blue` |
+| `playback_rate` | `0.25` to `2.0` |
+| `volume` | `0.0` to `1.0` |
+| `muted` | `true`, `false` |
+
+#### Watch history
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/videos/api/v1/watch-history/` | Retrieve the authenticated user's watch history |
+| DELETE | `/videos/api/v1/watch-history/` | Delete all watch-history entries |
+| GET | `/videos/api/v1/watch-history/<video_id>/` | Retrieve watch progress for a video |
+| PATCH | `/videos/api/v1/watch-history/<video_id>/` | Update playback progress, subtitle language, and completion status |
+| DELETE | `/videos/api/v1/watch-history/<video_id>/` | Delete a specific watch-history entry |
+
+The watch-history collection endpoint returns 50 records by default.
+Use `?limit=<number>` to request between 1 and 100 records.
+
+Watch history stores playback position, duration, subtitle language,
+completion status, and the last update timestamp.
+
+#### Search history
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/videos/api/v1/search-history/` | Retrieve recent searches |
+| POST | `/videos/api/v1/search-history/` | Save a search query |
+| DELETE | `/videos/api/v1/search-history/` | Clear search history |
+| DELETE | `/videos/api/v1/search-history/?query=<query>` | Delete a specific search query |
+
+Search history retains up to five recent queries per authenticated user.
+
+All user-data endpoints require authentication and operate only on the
+currently authenticated user's records.
 
 ## Maintenance commands
 
