@@ -49,6 +49,16 @@ class Video(models.Model):
         auto_now_add=True
     )
 
+    def __str__(self):
+        return f"{self.title} — {self.user.username}"
+
+class Content(Video):
+    class Meta:
+        proxy = True
+        verbose_name = "Video content"
+        verbose_name_plural = "Video content"
+
+
 class VideoQuality(models.Model):
 
     QUALITY_CHOICES = [
@@ -197,6 +207,13 @@ class VideoReaction(models.Model):
             )
         ]
 
+    def __str__(self):
+        return (
+            f"{self.user.username} — "
+            f"{self.get_reaction_type_display()} — "
+            f"{self.video.title}"
+        )
+
 class Comment(models.Model):
 
     user=models.ForeignKey(
@@ -234,6 +251,21 @@ class Comment(models.Model):
     created_at=models.DateTimeField(
         auto_now_add=True
     )
+
+    def __str__(self):
+        if self.is_removed:
+            return (
+                f"{self.user.username} — "
+                f"removed comment on {self.video.title}"
+            )
+
+        preview = self.text.strip() or "(empty)"
+        kind = "reply" if self.parent_id else "comment"
+
+        return (
+            f"{self.user.username} — {kind} "
+            f"on {self.video.title}: {preview[:60]}"
+        )
 
 class CommentLike(models.Model):
 
@@ -625,6 +657,16 @@ class VideoView(models.Model):
         auto_now_add=True
     )
 
+    def __str__(self):
+        if self.user_id:
+            viewer = self.user.username
+        elif self.ip_address:
+            viewer = f"Anonymous ({self.ip_address})"
+        else:
+            viewer = "Anonymous"
+
+        return f"{viewer} viewed {self.video.title}"
+
 
 class LiveStream(models.Model):
 
@@ -937,3 +979,156 @@ class LiveStreamReaction(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.reaction_type} - Live {self.live_stream_id}"
+
+class UserPreference(models.Model):
+
+    LANGUAGE_CHOICES = [
+        ("fa", "Persian"),
+        ("en", "English"),
+    ]
+
+    THEME_CHOICES = [
+        ("light", "Light"),
+        ("dark", "Dark"),
+    ]
+
+    BACKGROUND_STYLE_CHOICES = [
+        ("default", "Default"),
+        ("soft", "Soft"),
+        ("blue", "Blue"),
+    ]
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="user_preferences"
+    )
+
+    language = models.CharField(
+        max_length=2,
+        choices=LANGUAGE_CHOICES,
+        default="fa"
+    )
+
+    theme = models.CharField(
+        max_length=5,
+        choices=THEME_CHOICES,
+        default="dark"
+    )
+
+    accent = models.CharField(
+        max_length=7,
+        default="#8b5cf6"
+    )
+
+    background_style = models.CharField(
+        max_length=10,
+        choices=BACKGROUND_STYLE_CHOICES,
+        default="default"
+    )
+
+    playback_rate = models.FloatField(default=1.0)
+    volume = models.FloatField(default=1.0)
+    muted = models.BooleanField(default=False)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    playback_rate__gte=0.25,
+                    playback_rate__lte=2.0
+                ),
+                name="user_pref_rate_range"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    volume__gte=0.0,
+                    volume__lte=1.0
+                ),
+                name="user_pref_volume_range"
+            ),
+        ]
+
+    def __str__(self):
+        return f"Preferences: {self.user.username}"
+
+
+class WatchHistory(models.Model):
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="watch_history"
+    )
+
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.CASCADE,
+        related_name="watch_history"
+    )
+
+    current_time = models.FloatField(default=0)
+    duration = models.FloatField(default=0)
+
+    subtitle_language = models.CharField(
+        max_length=20,
+        default="off"
+    )
+
+    completed = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "video"],
+                name="watch_hist_unique_user_video"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(current_time__gte=0),
+                name="watch_hist_time_nonnegative"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(duration__gte=0),
+                name="watch_hist_duration_ok"
+            ),
+        ]
+
+        indexes = [
+            models.Index(
+                fields=["user", "-updated_at"],
+                name="idx_watch_user_updated"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.video.title}"
+
+
+class SearchHistory(models.Model):
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="search_history"
+    )
+
+    query = models.CharField(max_length=200)
+    created_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+        indexes = [
+            models.Index(
+                fields=["user", "-created_at"],
+                name="idx_search_user_created"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username}: {self.query}"

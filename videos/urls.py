@@ -1,7 +1,8 @@
-from django.urls import path
+from django.urls import include, path
 from . import views
 
 urlpatterns=[
+    path("api/v1/", include(("videos.api_v1_urls", "videos_api_v1"), namespace="v1")),
     path("",views.home,name="home"),
     path("api/live/mediamtx-auth/",views.mediamtx_auth_api,name="mediamtx_auth_api"),
     path("api/live/",views.create_live_stream_api,name="create_live_stream_api"),

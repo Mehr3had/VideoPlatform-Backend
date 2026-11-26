@@ -1,0 +1,52 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+    <h1>{{ title }}</h1>
+
+    <div class="module">
+        <p>{{ message }}</p>
+
+        <p>
+            <strong>Selected reports:</strong> {{ report_count }}
+        </p>
+
+        <p>
+            <strong>Content affected:</strong>
+            {{ content_count }} {{ content_label }}
+        </p>
+    </div>
+
+    <form method="post" action="{{ form_action }}">
+        {% csrf_token %}
+
+        <input type="hidden" name="action" value="{{ action_name }}">
+        <input type="hidden" name="index" value="{{ index }}">
+        <input type="hidden" name="_confirm_report_action" value="1">
+
+        {% if select_across %}
+            <input type="hidden" name="select_across" value="1">
+        {% else %}
+            {% for object_id in selected_ids %}
+                <input
+                    type="hidden"
+                    name="_selected_action"
+                    value="{{ object_id }}"
+                >
+            {% endfor %}
+        {% endif %}
+
+        <div class="submit-row">
+            <input
+                type="submit"
+                value="Confirm action"
+                class="default"
+            >
+
+            <a href="{{ cancel_url }}" class="button cancel-link">
+                Cancel
+            </a>
+        </div>
+    </form>
+</div>
+{% endblock %}

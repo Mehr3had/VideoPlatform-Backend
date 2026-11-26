@@ -1,6 +1,6 @@
 from django.shortcuts import render,get_object_or_404,redirect # type: ignore
-from .models import CommentDislike, CommentReport, Video,VideoReaction,Category,Subscription,Profile,VideoView
-from .models import Comment, CommentLike, Notification, NotificationPreference,SubscriberMilestone,LiveStream,LiveChatMessage,LiveStreamReaction,LiveStreamReport,LiveChatMessageReport, VideoReport
+from .models import CommentDislike, CommentReport, Video,VideoSubtitle,VideoReaction,Category,Subscription,Profile,VideoView
+from .models import Comment, CommentLike, Notification, NotificationPreference,SubscriberMilestone,LiveStream,LiveChatMessage,LiveStreamReaction,LiveStreamReport,LiveChatMessageReport, VideoReport, UserPreference, WatchHistory, SearchHistory
 from django.contrib.auth.decorators import login_required # type: ignore
 from django.contrib.auth.models import User # type: ignore
 from rest_framework.response import Response # type: ignore
@@ -31,6 +31,7 @@ from django.core.files.storage import default_storage
 from .translations import MESSAGES, get_messages
 from .services.hls import generate_hls, HLSGenerationError
 import os
+import math
 import logging
 import subprocess
 import shutil
@@ -5178,3 +5179,441 @@ def mediamtx_archive_api(request):
                     "Could not remove temporary archive file: %s",
                     temporary_file,
                 )
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def user_preferences_api(request):
+    preferences, _ = UserPreference.objects.get_or_create(
+        user=request.user
+    )
+
+    editable_fields = [
+        "language",
+        "theme",
+        "accent",
+        "background_style",
+        "playback_rate",
+        "volume",
+        "muted",
+    ]
+
+    def build_response():
+        return {
+            "language": preferences.language,
+            "theme": preferences.theme,
+            "accent": preferences.accent,
+            "background_style": preferences.background_style,
+            "playback_rate": preferences.playback_rate,
+            "volume": preferences.volume,
+            "muted": preferences.muted,
+            "updated_at": preferences.updated_at,
+        }
+
+    if request.method == "GET":
+        return Response(build_response())
+
+    data = request.data
+
+    if not hasattr(data, "keys"):
+        return Response(
+            {"error": "Expected a JSON object."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    unknown_fields = set(data.keys()) - set(editable_fields)
+    if unknown_fields:
+        return Response(
+            {
+                "error": "Unknown preference fields.",
+                "fields": sorted(unknown_fields),
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    choice_fields = {
+        "language": {"fa", "en"},
+        "theme": {"light", "dark"},
+        "background_style": {"default", "soft", "blue"},
+    }
+
+    for field, allowed_values in choice_fields.items():
+        if field in data and (
+            not isinstance(data[field], str)
+            or data[field] not in allowed_values
+        ):
+            return Response(
+                {
+                    "error": f"Invalid value for {field}.",
+                    "allowed": sorted(allowed_values),
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    if "accent" in data:
+        accent = data["accent"]
+        if not isinstance(accent, str) or not re.fullmatch(
+            r"#[0-9a-fA-F]{6}", accent
+        ):
+            return Response(
+                {"error": "accent must be a six-digit hex color."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    numeric_ranges = {
+        "playback_rate": (0.25, 2.0),
+        "volume": (0.0, 1.0),
+    }
+
+    for field, (minimum, maximum) in numeric_ranges.items():
+        if field not in data:
+            continue
+
+        value = data[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not minimum <= value <= maximum
+        ):
+            return Response(
+                {
+                    "error": (
+                        f"{field} must be a number between "
+                        f"{minimum} and {maximum}."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        setattr(preferences, field, float(value))
+
+    if "muted" in data:
+        if not isinstance(data["muted"], bool):
+            return Response(
+                {"error": "muted must be true or false."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    for field in (
+        "language",
+        "theme",
+        "accent",
+        "background_style",
+        "muted",
+    ):
+        if field in data:
+            setattr(preferences, field, data[field])
+
+    preferences.save()
+    return Response(build_response())
+
+
+@api_view(["GET", "DELETE"])
+@permission_classes([IsAuthenticated])
+def watch_history_api(request):
+    queryset = WatchHistory.objects.filter(
+        user=request.user
+    ).select_related("video")
+
+    if request.method == "DELETE":
+        deleted_count, _ = queryset.delete()
+        return Response({"deleted_count": deleted_count})
+
+    raw_limit = request.query_params.get("limit", "50")
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "limit must be an integer between 1 and 100."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if not 1 <= limit <= 100:
+        return Response(
+            {"error": "limit must be between 1 and 100."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    results = [
+        {
+            "video_id": item.video_id,
+            "video_title": item.video.title,
+            "thumbnail": (
+                item.video.thumbnail.url
+                if item.video.thumbnail else None
+            ),
+            "current_time": item.current_time,
+            "duration": item.duration,
+            "subtitle_language": item.subtitle_language,
+            "completed": item.completed,
+            "updated_at": item.updated_at,
+        }
+        for item in queryset[:limit]
+    ]
+
+    return Response({
+        "count": queryset.count(),
+        "results": results,
+    })
+
+
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def watch_history_item_api(request, video_id):
+    video = get_object_or_404(Video, id=video_id)
+
+    history = WatchHistory.objects.filter(
+        user=request.user,
+        video=video
+    ).first()
+
+    if request.method == "GET":
+        if history is None:
+            return Response({
+                "video_id": video.id,
+                "current_time": 0,
+                "duration": 0,
+                "subtitle_language": "off",
+                "completed": False,
+                "exists": False,
+            })
+
+        return Response({
+            "video_id": video.id,
+            "current_time": history.current_time,
+            "duration": history.duration,
+            "subtitle_language": history.subtitle_language,
+            "completed": history.completed,
+            "updated_at": history.updated_at,
+            "exists": True,
+        })
+
+    if request.method == "DELETE":
+        if history is not None:
+            history.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    data = request.data
+    allowed_fields = {
+        "current_time",
+        "duration",
+        "subtitle_language",
+        "completed",
+    }
+
+    if not hasattr(data, "keys"):
+        return Response(
+            {"error": "Expected a JSON object."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    unknown_fields = set(data.keys()) - allowed_fields
+    if unknown_fields:
+        return Response(
+            {
+                "error": "Unknown watch history fields.",
+                "fields": sorted(unknown_fields),
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if not data:
+        return Response(
+            {"error": "At least one field is required."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    current_time = (
+        history.current_time if history else 0
+    )
+    duration = (
+        history.duration if history else 0
+    )
+
+    for field in ("current_time", "duration"):
+        if field not in data:
+            continue
+
+        value = data[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            return Response(
+                {"error": f"{field} must be a non-negative finite number."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if field == "current_time":
+            current_time = float(value)
+        else:
+            duration = float(value)
+
+    if current_time > duration:
+        return Response(
+            {"error": "current_time cannot exceed duration."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    subtitle_language = (
+        data.get(
+            "subtitle_language",
+            history.subtitle_language if history else "off"
+        )
+    )
+
+    if subtitle_language not in ("off", "fa", "en"):
+        return Response(
+            {"error": "subtitle_language must be off, fa, or en."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if (
+        subtitle_language != "off"
+        and not VideoSubtitle.objects.filter(
+            video=video,
+            language=subtitle_language
+        ).exists()
+    ):
+        return Response(
+            {"error": "The selected subtitle is not available for this video."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    completed = data.get(
+        "completed",
+        history.completed if history else False
+    )
+
+    if not isinstance(completed, bool):
+        return Response(
+            {"error": "completed must be true or false."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    history, _ = WatchHistory.objects.update_or_create(
+        user=request.user,
+        video=video,
+        defaults={
+            "current_time": current_time,
+            "duration": duration,
+            "subtitle_language": subtitle_language,
+            "completed": completed,
+        }
+    )
+
+    return Response({
+        "video_id": video.id,
+        "current_time": history.current_time,
+        "duration": history.duration,
+        "subtitle_language": history.subtitle_language,
+        "completed": history.completed,
+        "updated_at": history.updated_at,
+        "exists": True,
+    })
+
+
+@api_view(["GET", "POST", "DELETE"])
+@permission_classes([IsAuthenticated])
+def search_history_api(request):
+
+    queryset = SearchHistory.objects.filter(
+        user=request.user
+    )
+
+    if request.method == "GET":
+        results = queryset.order_by(
+            "-created_at",
+            "-id"
+        ).values_list("query", flat=True)[:5]
+
+        return Response({
+            "count": len(results),
+            "results": list(results),
+        })
+
+    if request.method == "DELETE":
+        if "query" in request.query_params:
+            query = request.query_params.get("query", "").strip()
+
+            if not query:
+                return Response(
+                    {"error": "query cannot be empty."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            deleted_count, _ = queryset.filter(
+                query__iexact=query
+            ).delete()
+        else:
+            deleted_count, _ = queryset.delete()
+
+        return Response({
+            "deleted_count": deleted_count
+        })
+
+    data = request.data
+
+    if not hasattr(data, "keys"):
+        return Response(
+            {"error": "Expected a JSON object."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    unknown_fields = set(data.keys()) - {"query"}
+    if unknown_fields:
+        return Response(
+            {
+                "error": "Unknown fields.",
+                "fields": sorted(unknown_fields),
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    query = data.get("query")
+
+    if not isinstance(query, str):
+        return Response(
+            {"error": "query must be a string."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    query = query.strip()
+
+    if not query or len(query) > 200:
+        return Response(
+            {"error": "query must contain between 1 and 200 characters."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    with transaction.atomic():
+        queryset.filter(query__iexact=query).delete()
+
+        SearchHistory.objects.create(
+            user=request.user,
+            query=query
+        )
+
+        old_ids = list(
+            queryset.order_by(
+                "-created_at",
+                "-id"
+            ).values_list("id", flat=True)[5:]
+        )
+
+        if old_ids:
+            queryset.filter(id__in=old_ids).delete()
+
+        results = list(
+            queryset.order_by(
+                "-created_at",
+                "-id"
+            ).values_list("query", flat=True)[:5]
+        )
+
+    return Response({
+        "count": len(results),
+        "results": results,
+    }, status=status.HTTP_200_OK)

@@ -1,0 +1,62 @@
+{% load i18n %}
+
+<details data-filter-title="{{ title }}" open>
+    <summary>
+        {% blocktranslate with filter_title=title %}
+            By {{ filter_title }}
+        {% endblocktranslate %}
+    </summary>
+
+    <form
+        method="get"
+        action="{{ request.path }}"
+        class="admin-filter-search-wrap"
+    >
+        {% for key, values in request.GET.lists %}
+            {% if key != "uploader_search" and key != "uploader" and key != "p" %}
+                {% for value in values %}
+                    <input
+                        type="hidden"
+                        name="{{ key }}"
+                        value="{{ value }}"
+                    >
+                {% endfor %}
+            {% endif %}
+        {% endfor %}
+
+        <input
+            type="search"
+            name="uploader_search"
+            class="vTextField admin-filter-search"
+            value="{{ request.GET.uploader_search|default:'' }}"
+            placeholder="Search name or username..."
+            aria-label="Search uploader name or username"
+            minlength="2"
+            autocomplete="off"
+        >
+
+        <button type="submit" class="button">
+            {% translate "Search" %}
+        </button>
+    </form>
+
+    {% if request.GET.uploader_search and request.GET.uploader_search|length >= 2 %}
+        <p class="help">
+            Showing up to 20 matching uploaders.
+        </p>
+    {% elif request.GET.uploader_search %}
+        <p class="help">
+            Enter at least 2 characters.
+        </p>
+    {% endif %}
+
+    <ul>
+        {% for choice in choices %}
+            <li{% if choice.selected %} class="selected"{% endif %}>
+                <a href="{{ choice.query_string|iriencode }}">
+                    {{ choice.display }}
+                </a>
+            </li>
+        {% endfor %}
+    </ul>
+</details>
