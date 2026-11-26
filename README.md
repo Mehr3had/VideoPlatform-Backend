@@ -27,15 +27,24 @@ Exact Python dependency versions are pinned in [`requirements.txt`](requirements
 
 The following screenshots showcase the user interface of VideoPlatform.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/home.png" width="49%" alt="Home Page">
-  <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/video-player.png" width="49%" alt="Video Player">
-</p>
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/profile.png" width="49%" alt="Creator Profile">
-  <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/settings.png" width="49%" alt="User Settings">
-</p>
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/home.png" width="100%" alt="Home Page">
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/video-player.png" width="100%" alt="Video Player">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/profile.png" width="100%" alt="Creator Profile">
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/settings.png" width="100%" alt="User Settings">
+    </td>
+  </tr>
+</table>
 
 For more details about the frontend, visit the [Frontend Repository](https://github.com/Mehr3had/VideoPlatform-Frontend).
 
