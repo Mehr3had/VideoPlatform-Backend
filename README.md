@@ -328,6 +328,13 @@ Search history retains up to five recent queries per authenticated user.
 All user-data endpoints require authentication and operate only on the
 currently authenticated user's records.
 
+## Video processing
+
+- FFprobe extracts video duration during upload.
+- An FFmpeg utility can generate 480p, 720p, and 1080p variants, skipping resolutions above the source resolution.
+- Quality generation is a separate operation and is not automatically triggered by upload.
+- Media files are stored under `MEDIA_ROOT` (by default, the backend `media/` directory).
+
 ## Maintenance commands
 
 Preview old/orphan HLS directories:
