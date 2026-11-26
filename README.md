@@ -23,6 +23,22 @@ A Django REST Framework backend for a video-sharing platform inspired by YouTube
 
 Exact Python dependency versions are pinned in [`requirements.txt`](requirements.txt).
 
+## Frontend Screenshots
+
+The following screenshots showcase the user interface of VideoPlatform.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/home.png" width="49%" alt="Home Page">
+  <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/video-player.png" width="49%" alt="Video Player">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/profile.png" width="49%" alt="Creator Profile">
+  <img src="https://raw.githubusercontent.com/Mehr3had/VideoPlatform-Frontend/master/docs/screenshots/settings.png" width="49%" alt="User Settings">
+</p>
+
+For more details about the frontend, visit the [Frontend Repository](https://github.com/Mehr3had/VideoPlatform-Frontend).
+
 ## Features
 
 ### Authentication and account management
